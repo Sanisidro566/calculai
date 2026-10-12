@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Cuaderno — estudia con un plan</title>
+<meta name="description" content="Cuaderno de estudio: qué estudiar ahora, mapa de dominio, práctica con calibración, banco de errores y calendario exportable. Gratis, sin cuentas, tus datos quedan en tu dispositivo.">
+<meta name="theme-color" content="#f5f2e8">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<meta property="og:title" content="Cuaderno — estudia con un plan">
+<meta property="og:description" content="Qué estudiar ahora, práctica honesta y calendario de evaluaciones. Gratis y sin cuentas.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@100..125,400..800&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=JetBrains+Mono:wght@400;700&family=Kalam:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<script>try{var t=localStorage.getItem('cuaderno-theme');if(t)document.documentElement.dataset.theme=t;}catch(e){}</script>
+</head>
+<body>
+<a href="#view" class="sr">Saltar al contenido</a>
+<header class="top">
+  <div class="top-in">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">C</div>
+      <div><b>Cuaderno</b><small id="todayLbl"></small></div>
+    </div>
+    <div class="spacer"></div>
+    <div class="sync" id="sync" data-s="none" title="Dónde se guardan tus datos"><i></i><span id="syncTxt">Sin guardar</span></div>
+    <button class="iconbtn" type="button" id="installBtn" hidden>⇩ <span class="hide-sm">Instalar</span></button>
+    <button class="iconbtn" type="button" id="palBtn" aria-label="Buscar o saltar (Ctrl+K)">⌕ <span class="kbd hide-sm">Ctrl K</span></button>
+    <button class="iconbtn" type="button" id="themeBtn" aria-label="Cambiar tema claro u oscuro" style="font-size:1.15rem">◐</button>
+  </div>
+  <nav class="tabs" role="tablist" id="tabs"></nav>
+</header>
+<main class="wrap" id="view"></main>
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" aria-hidden="true" aria-label="Panel"></aside>
+<section class="focus" id="focus" aria-label="Modo enfoque"></section>
+<div class="pal" id="pal" role="dialog" aria-label="Buscar"><div class="pal-box"><input id="palIn" placeholder="Ir a un tema, sección o acción…" autocomplete="off"><div class="pal-list" id="palList" role="listbox"></div></div></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<noscript><p style="padding:20px">El Cuaderno necesita JavaScript activado.</p></noscript>
+<script src="vendor/katex.min.js" defer></script>
+<script src="app.js" defer></script>
+</body>
+</html>
