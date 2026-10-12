@@ -124,6 +124,7 @@
 
   /* ---------- paso 3: entregar a Calculai ---------- */
   function deliver(payload){
+    window.__calculaiLast = payload;
     var nEv = 0, nRes = 0, nNews = 0; payload.courses.forEach(function(c){ nEv += c.events.length; nRes += c.resources.length; nNews += c.news.length; });
     var status = el('p', {text:''});
     function download(){ var blob = new Blob([JSON.stringify(payload)], {type:'application/json'}); var a = el('a', {href:URL.createObjectURL(blob), download:'calculai-webc-' + new Date().toISOString().slice(0, 10) + '.json'}); document.body.appendChild(a); a.click(); a.remove(); status.textContent = 'Archivo descargado. En Calculai: Editar → Abrir archivo.'; status.className = 'clc-ok'; }
