@@ -1,4 +1,4 @@
-# Cuaderno — estudia con un plan
+# Calculai — estudia con un plan
 
 Aplicación web de estudio, gratuita y sin cuentas. Funciona en cualquier navegador y se puede instalar en el celular o el computador. Después de la primera visita también funciona sin internet.
 
@@ -9,6 +9,7 @@ Aplicación web de estudio, gratuita y sin cuentas. Funciona en cualquier navega
 - **Práctica:** preguntas de alternativas o numéricas, con fórmulas ($…$). Antes de responder dices qué tan seguro estás, y la app mide tu calibración.
 - **Errores:** los errores se guardan solos y puedes anotar su causa.
 - **Calendario:** vista mensual y agenda. Cada fecha muestra si está confirmada o no. Se exporta como `.ics` (Google, Apple, Outlook) o como CSV.
+- **Conectar con WebC (o cualquier Moodle):** un marcador «Enviar a Calculai» lee tus cursos, las fechas del calendario, los recursos y los avisos desde tu sesión abierta de WebC (sirve aunque entres con Microsoft). Calculai detecta fechas dentro de los avisos y te las muestra como sugerencias para que las confirmes. No usa contraseñas ni servidores intermedios.
 - **Editar:** materias, evaluaciones, temas, ejercicios y recursos. Tiene respaldo completo y «plantilla para compartir» con compañeros (sin el progreso).
 
 ## Privacidad
@@ -18,9 +19,9 @@ Todos los datos se guardan en el navegador (`localStorage`) de cada persona. No 
 Es un sitio estático: basta con subir esta carpeta tal cual.
 
 **Opción A: GitHub Pages**
-1. Crea un repositorio público (por ejemplo `cuaderno`) y sube todos estos archivos a la raíz.
+1. Crea un repositorio público (por ejemplo `calculai`) y sube todos estos archivos a la raíz.
 2. Ve a *Settings → Pages → Deploy from a branch → main / (root)* y guarda.
-3. En un minuto queda en `https://TU-USUARIO.github.io/cuaderno/`.
+3. En un minuto queda en `https://TU-USUARIO.github.io/calculai/`.
 
 **Opción B: Netlify Drop**
 1. Entra a https://app.netlify.com/drop.
@@ -32,7 +33,7 @@ Es un sitio estático: basta con subir esta carpeta tal cual.
 
 ## Probarla en tu computador
 ```bash
-cd cuaderno-web
+cd calculai
 python3 -m http.server 8000
 # abre http://localhost:8000
 ```
@@ -44,5 +45,6 @@ python3 -m http.server 8000
 | `styles.css` | Diseño (claro y oscuro) |
 | `app.js` | Toda la lógica |
 | `sw.js` | Modo sin internet |
+| `conector.js` | Conector que se ejecuta dentro de WebC/Moodle desde el marcador |
 | `manifest.webmanifest`, `icons/` | Instalación como app |
 | `vendor/katex.min.js` | Fórmulas matemáticas (KaTeX, licencia MIT) |

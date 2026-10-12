@@ -1,4 +1,4 @@
-/* Cuaderno — app de estudio. Funciona en cualquier navegador; los datos viven en este dispositivo. */
+/* Calculai — app de estudio. Funciona en cualquier navegador; los datos viven en este dispositivo. */
 'use strict';
 
 /* =========================================================
@@ -48,6 +48,7 @@ const cap = s => s.replace(/^./, c => c.toUpperCase());
 const uid = (p = 'x') => p + '-' + Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-3);
 function toast(msg){ const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('on'), 2400); }
 const countdown = d => d === 0 ? 'hoy' : d === 1 ? 'mañana' : d < 0 ? 'ya pasó' : `en ${d} días`;
+const agoTxt = d => d <= 0 ? 'hoy' : d === 1 ? 'ayer' : `hace ${d} días`;
 const plural = (n, a, b) => `${n} ${n === 1 ? a : b}`;
 
 /* =========================================================
@@ -64,13 +65,13 @@ const STATUSES = [
 const W = Object.fromEntries(STATUSES.map(s => [s.k, s.w]));
 const SL = Object.fromEntries(STATUSES.map(s => [s.k, s.l]));
 const INTERVAL = {aprendiendo:1, practicado:3, repaso:1, dominado:7};
-const STORE = 'cuaderno-web:v1';
-const blankData = () => ({v:1, owner:'', subjects:[], events:[], topics:[], items:[], resources:[]});
+const STORE = 'calculai:v1', OLD_STORE = 'cuaderno-web:v1';
+const blankData = () => ({v:1, owner:'', subjects:[], events:[], topics:[], items:[], resources:[], news:[], sync:{}});
 const blankProg = () => ({status:{}, attempts:[], errors:[], days:{}, sessions:[]});
 function normData(d){ const b = blankData(); if (!d || typeof d !== 'object') return b; for (const k of Object.keys(b)) if (d[k] != null && typeof d[k] === typeof b[k]) b[k] = d[k]; return b; }
 function normProg(p){ const b = blankProg(); if (!p || typeof p !== 'object') return b; for (const k of Object.keys(b)) if (p[k] != null && typeof p[k] === typeof b[k]) b[k] = p[k]; return b; }
 let D = blankData(), P = blankProg(), storageOk = true;
-try { const raw = localStorage.getItem(STORE); if (raw){ const j = JSON.parse(raw); D = normData(j.data); P = normProg(j.progress); } } catch { storageOk = false; }
+try { const raw = localStorage.getItem(STORE) || localStorage.getItem(OLD_STORE); if (raw){ const j = JSON.parse(raw); D = normData(j.data); P = normProg(j.progress); } } catch { storageOk = false; }
 let saveT = null;
 function save(){ clearTimeout(saveT); saveT = setTimeout(() => {
   P.attempts = P.attempts.slice(-800); P.sessions = P.sessions.slice(-400); P.errors = P.errors.slice(-400);
@@ -150,8 +151,8 @@ function daySuggest(d){
    ========================================================= */
 const TABS = [{k:'ahora', l:'Ahora'}, {k:'mapa', l:'Mapa'}, {k:'practica', l:'Práctica'}, {k:'errores', l:'Errores'}, {k:'cal', l:'Calendario'}, {k:'biblio', l:'Biblioteca'}, {k:'editar', l:'Editar'}];
 let tab = 'ahora', mapSubj = null, planPick = 0, pracFilter = 'todo', selDay = null;
-try { const t = sessionStorage.getItem('cuaderno-tab'); if (t && TABS.some(x => x.k === t)) tab = t; } catch {}
-function go(k){ tab = k; try { sessionStorage.setItem('cuaderno-tab', k); } catch {} render(); window.scrollTo({top:0}); }
+try { const t = sessionStorage.getItem('calculai-tab'); if (t && TABS.some(x => x.k === t)) tab = t; } catch {}
+function go(k){ tab = k; try { sessionStorage.setItem('calculai-tab', k); } catch {} render(); window.scrollTo({top:0}); }
 function renderTabs(){
   const nav = $('#tabs'); nav.replaceChildren();
   if (!D.subjects.length) return;
@@ -162,7 +163,8 @@ function renderTabs(){
 function render(){
   renderTabs();
   const v = $('#view'); v.replaceChildren();
-  if (!D.subjects.length){ vWelcome(v); return; }
+  if (!D.subjects.length && tab !== 'webc'){ vWelcome(v); return; }
+  if (tab === 'webc'){ vWebcReview(v); return; }
   ({ahora:vAhora, mapa:vMapa, practica:vPractica, errores:vErrores, cal:vCal, biblio:vBiblio, editar:vEditar})[tab](v);
 }
 const subjChip = s => h('span', {class:'chip subj-chip', style:scs(s)}, h('span', {class:'dot', style:'background:var(--sc)'}), S(s).short);
@@ -175,12 +177,13 @@ const kindChip = e => h('span', {class:`kchip k-${e.kind}`}, (KIND[e.kind] || KI
 function vWelcome(v){
   const file = h('input', {type:'file', accept:'.json,application/json', style:'display:none', onchange:e => importFile(e.target.files[0], true)});
   v.append(h('div', {class:'welcome'},
-    h('p', {class:'note', style:'margin:0 0 6px'}, 'tu cuaderno de estudio'),
+    h('p', {class:'note', style:'margin:0 0 6px'}, 'calculai · tu plan de estudio'),
     h('h1', null, 'Estudia con un plan, ', h('span', {class:'hl'}, 'no con culpa.')),
-    h('p', {class:'muted', style:'font-size:1.05rem'}, 'Agrega tus materias, evaluaciones y temas. El Cuaderno te dice qué estudiar en la próxima hora y por qué, te hace practicar con honestidad y te avisa lo que viene.'),
+    h('p', {class:'muted', style:'font-size:1.05rem'}, 'Agrega tus materias, evaluaciones y temas. Calculai te dice qué estudiar en la próxima hora y por qué, te hace practicar con honestidad y te avisa lo que viene.'),
     h('div', {class:'choices'},
       h('button', {class:'choice', type:'button', onclick:startEmpty}, h('span', {class:'ico'}, '✎'), h('b', null, 'Empezar desde cero'), h('span', null, 'Creo mi primera materia y voy agregando lo demás.')),
       h('button', {class:'choice', type:'button', onclick:() => { D = makeExample(); P = blankProg(); save(); go('ahora'); toast('Cargué un ejemplo: edítalo o bórralo cuando quieras'); }}, h('span', {class:'ico'}, '◎'), h('b', null, 'Ver un ejemplo'), h('span', null, 'Tres materias de muestra para conocer la app. Después lo borras.')),
+      h('button', {class:'choice', type:'button', onclick:openWebcHelp}, h('span', {class:'ico'}, '⟳'), h('b', null, 'Conectar con WebC'), h('span', null, 'Trae tus cursos, fechas, recursos y avisos desde WebC (o tu Moodle).')),
       h('button', {class:'choice', type:'button', onclick:() => file.click()}, h('span', {class:'ico'}, '⇪'), h('b', null, 'Abrir un archivo'), h('span', null, 'Un respaldo tuyo o una plantilla que te compartió alguien de tu curso.'))),
     file,
     h('div', {class:'feat'},
@@ -203,6 +206,7 @@ function vAhora(v){
   const first = upcoming[0];
   v.append(h('div', {class:'hello'},
     h('div', null, h('h1', null, saludo + (D.owner ? ', ' + D.owner : '') + '. ', h('span', {class:'hl'}, '¿Qué hago ahora?')),
+      D.sync && D.sync.webc ? h('p', {class:'tiny muted', style:'margin:2px 0 0'}, `WebC leído ${agoTxt(diffDays(parse(D.sync.webc.at.slice(0, 10)), TODAY))} · `, h('a', {href:'#', onclick:e => { e.preventDefault(); openWebcHelp(); }}, 'actualizar')) : null,
       h('p', null, first ? `Próximos 30 días: ${plural(upcoming.length, 'evaluación', 'evaluaciones')}. La más cercana: ${S(first.subj).short} · ${first.name}, ${countdown(diffDays(TODAY, parse(first.date)))}.` : 'No tienes evaluaciones en los próximos 30 días. Agrégalas en Editar.'))));
 
   if (upcoming.length){
@@ -259,7 +263,7 @@ function vAhora(v){
   const due = D.topics.filter(t => isDue(t.id));
   v.append(h('div', {class:'sec-title'}, h('h2', null, 'Repasos que vencen'), h('span', {class:'hand'}, due.length ? `${due.length} hoy` : 'nada pendiente')));
   v.append(due.length ? h('div', {class:'duelist'}, due.map(t => h('button', {class:'chip subj-chip', type:'button', style:scs(t.subj) + ';cursor:pointer;min-height:36px', onclick:() => { mapSubj = t.subj; go('mapa'); setTimeout(() => openTopic(t.id), 50); }}, (t.code ? t.code + ' · ' : '') + t.title)))
-    : h('p', {class:'muted'}, 'Cuando marques un tema, el Cuaderno calcula cuándo repasarlo: Aprendiendo y Necesita repaso al día siguiente, Practicado a los 3 días, Dominado a los 7.'));
+    : h('p', {class:'muted'}, 'Cuando marques un tema, Calculai calcula cuándo repasarlo: Aprendiendo y Necesita repaso al día siguiente, Practicado a los 3 días, Dominado a los 7.'));
 
   if (upcoming.length){
     v.append(h('div', {class:'sec-title'}, h('h2', null, 'Preparación por evaluación'), h('span', {class:'hand'}, 'estimación propia, no predice tu nota')));
@@ -588,9 +592,9 @@ function exportICS(){
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
   const ymd = s => s.replace(/-/g, '');
   const hm = m => pad(Math.floor(m / 60)) + pad(m % 60) + '00';
-  const L = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Cuaderno//Estudio//ES', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', 'X-WR-CALNAME:Cuaderno — evaluaciones'];
+  const L = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Calculai//Estudio//ES', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', 'X-WR-CALNAME:Calculai — evaluaciones'];
   D.events.filter(e => e.date && evOn(e)).forEach(e => {
-    L.push('BEGIN:VEVENT', `UID:${e.id}@cuaderno-estudio`, `DTSTAMP:${stamp}`);
+    L.push('BEGIN:VEVENT', `UID:${e.id}@calculai`, `DTSTAMP:${stamp}`);
     const tt = evTimes(e);
     if (tt){ L.push(`DTSTART:${ymd(e.date)}T${hm(tt.s)}`, `DTEND:${ymd(e.date)}T${hm(tt.en)}`); }
     else { L.push(`DTSTART;VALUE=DATE:${ymd(e.date)}`, `DTEND;VALUE=DATE:${ymd(iso(addDays(parse(e.date), 1)))}`); }
@@ -599,7 +603,7 @@ function exportICS(){
     L.push('END:VEVENT');
   });
   L.push('END:VCALENDAR');
-  download('cuaderno-evaluaciones.ics', L.join('\r\n') + '\r\n', 'text/calendar');
+  download('calculai-evaluaciones.ics', L.join('\r\n') + '\r\n', 'text/calendar');
   toast('Descargado. En Google Calendar: Configuración → Importar');
 }
 function exportCSV(){
@@ -610,7 +614,7 @@ function exportCSV(){
     const [Y, Mo, Dd] = e.date.split('-'), date = `${Mo}/${Dd}/${Y}`, tt = evTimes(e);
     rows.push([`[${S(e.subj).short}] ${e.name}`, date, tt ? ampm(tt.s) : '', date, tt ? ampm(tt.en) : '', tt ? 'False' : 'True', evDesc(e), '', 'True']);
   });
-  download('cuaderno-evaluaciones.csv', rows.map(r => r.map(cell).join(',')).join('\r\n') + '\r\n', 'text/csv');
+  download('calculai-evaluaciones.csv', rows.map(r => r.map(cell).join(',')).join('\r\n') + '\r\n', 'text/csv');
   toast('CSV descargado');
 }
 
@@ -628,6 +632,12 @@ const LIBRARY = [
   {area:'Física', t:'MIT OCW 8.01SC Classical Mechanics', lic:'CC BY-NC-SA 4.0', ai:'cond', n:'Videos y notas por semana (Dourmashkin).', u:'https://ocw.mit.edu/courses/8-01sc-classical-mechanics-fall-2016/'}
 ];
 function vBiblio(v){
+  const news = (D.news || []).slice().sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  if (news.length){
+    v.append(h('div', {class:'sec-title'}, h('h2', null, 'Avisos de WebC'), h('span', {class:'hand'}, D.sync && D.sync.webc ? 'leídos el ' + fmtD(parse(D.sync.webc.at.slice(0, 10))) : '')));
+    v.append(h('div', {class:'newslist'}, news.slice(0, 30).map(n => h('details', {class:'news', style:scs(n.subj)}, h('summary', null, subjChip(n.subj), h('b', null, n.title), h('small', {class:'muted'}, [n.author, n.date ? fmtD(parse(n.date)) : ''].filter(Boolean).join(' · '))),
+      h('div', {class:'newsbody'}, n.text), n.url ? h('a', {class:'tiny', href:n.url, target:'_blank', rel:'noopener'}, 'Ver en WebC ↗') : null))));
+  }
   v.append(h('div', {class:'sec-title'}, h('h2', null, 'Tu material'), h('span', {class:'hand'}, 'lo del curso manda')));
   D.subjects.forEach(s => {
     const ts = topicsOf(s.id).filter(t => t.url), rs = D.resources.filter(r => r.subj === s.id);
@@ -772,7 +782,7 @@ function openResourceForm(id){
     r ? () => { D.resources = D.resources.filter(x => x.id !== r.id); save(); } : null);
 }
 function vEditar(v){
-  v.append(h('div', {class:'sec-title'}, h('h2', null, 'Editar'), h('span', {class:'hand'}, 'tu cuaderno, a tu medida')));
+  v.append(h('div', {class:'sec-title'}, h('h2', null, 'Editar'), h('span', {class:'hand'}, 'tu Calculai, a tu medida')));
   v.append(h('label', {class:'field', style:'max-width:360px'}, h('span', null, '¿Cómo te llamo?'), h('input', {type:'text', value:D.owner || '', placeholder:'Tu nombre (opcional)', onchange:e => { D.owner = e.target.value.trim().slice(0, 30); save(); }})));
   const sec = (title, addLbl, onAdd, rows, emptyTxt) => v.append(h('section', {class:'edit-sec'},
     h('div', {style:'display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap'}, h('h3', {class:'display', style:'margin:0;font-size:1.15rem'}, title), h('button', {class:'btn small', type:'button', onclick:onAdd}, addLbl)),
@@ -784,14 +794,16 @@ function vEditar(v){
   sec('Ejercicios', '+ Ejercicio', () => openItemForm(null), D.items.map(i => { const t = topic(i.topic); return t ? row(scs(t.subj), String(i.q).replace(/\$[^$]*\$/g, '[fórmula]').slice(0, 90), `${S(t.subj).short} · ${t.title} · ${i.type === 'mc' ? 'alternativas' : 'numérica'}`, () => openItemForm(i.id)) : null; }).filter(Boolean), 'Sin ejercicios. Crea preguntas desde tus guías o pruebas anteriores.');
   sec('Recursos', '+ Recurso', () => openResourceForm(null), D.resources.map(r => row(scs(r.subj), r.title, `${S(r.subj).short}${r.kind ? ' · ' + r.kind : ''}`, () => openResourceForm(r.id))), 'Formularios, guías, simulacros, videos…');
 
+  v.append(webcCard());
   const file = h('input', {type:'file', accept:'.json,application/json', style:'display:none', onchange:e => importFile(e.target.files[0], false)});
   v.append(h('section', {class:'edit-sec card'},
     h('h3', {class:'display', style:'margin:0 0 6px;font-size:1.15rem'}, 'Respaldo y compartir'),
     h('p', {class:'tiny muted', style:'margin:0 0 10px'}, storageOk ? 'Tus datos se guardan automáticamente en este navegador. Descarga un respaldo de vez en cuando, o para pasarlos a otro equipo.' : '⚠ Este navegador no está guardando datos (¿modo incógnito?). Descarga un respaldo antes de cerrar.'),
     h('div', {style:'display:flex;gap:8px;flex-wrap:wrap'},
-      h('button', {class:'btn small', type:'button', onclick:() => download(`cuaderno-respaldo-${iso(TODAY)}.json`, JSON.stringify({app:'cuaderno', v:1, data:D, progress:P}, null, 1), 'application/json')}, '⇩ Respaldo completo'),
-      h('button', {class:'btn ghost small', type:'button', onclick:() => download(`cuaderno-plantilla-${iso(TODAY)}.json`, JSON.stringify({app:'cuaderno', v:1, data:{...D, owner:''}}, null, 1), 'application/json'), title:'Materias, fechas, temas y ejercicios, sin tu progreso'}, '⇩ Plantilla para compartir'),
+      h('button', {class:'btn small', type:'button', onclick:() => download(`calculai-respaldo-${iso(TODAY)}.json`, JSON.stringify({app:'calculai', v:1, data:D, progress:P}, null, 1), 'application/json')}, '⇩ Respaldo completo'),
+      h('button', {class:'btn ghost small', type:'button', onclick:() => download(`calculai-plantilla-${iso(TODAY)}.json`, JSON.stringify({app:'calculai', v:1, data:{...D, owner:''}}, null, 1), 'application/json'), title:'Materias, fechas, temas y ejercicios, sin tu progreso'}, '⇩ Plantilla para compartir'),
       h('button', {class:'btn ghost small', type:'button', onclick:() => file.click()}, '⇪ Abrir archivo'), file,
+      h('button', {class:'btn ghost small', type:'button', onclick:shareToDevice, title:'Envía tu respaldo al celular u otro equipo'}, '📱 Pasar a otro dispositivo'),
       h('button', {class:'btn danger small', type:'button', onclick:() => { if (confirm('¿Borrar todos los datos de este navegador? Descarga antes un respaldo si los quieres.')){ D = blankData(); P = blankProg(); save(); tab = 'ahora'; render(); } }}, 'Borrar todo')),
     h('p', {class:'tiny muted', style:'margin:10px 0 0'}, 'La plantilla no incluye tu progreso: sirve para que alguien de tu curso parta con las mismas materias, fechas y ejercicios.')));
 }
@@ -800,12 +812,14 @@ function importFile(f, fromWelcome){
   const r = new FileReader();
   r.onload = () => {
     try {
-      const j = JSON.parse(r.result); if (!j || !j.data || !Array.isArray(j.data.subjects)) throw new Error('formato');
+      const j = JSON.parse(r.result);
+      if (j && j.type === 'calculai-webc' && Array.isArray(j.courses)){ receiveWebc(j); return; }
+      if (!j || !j.data || !Array.isArray(j.data.subjects)) throw new Error('formato');
       const nd = normData(j.data);
       if (!fromWelcome && D.subjects.length && !confirm(j.progress ? 'Esto reemplaza tus datos y tu progreso actuales por los del archivo. ¿Continuar?' : 'Esto reemplaza tus materias, fechas, temas y ejercicios por los de la plantilla (tu progreso se mantiene en los temas que coincidan). ¿Continuar?')) return;
       D = nd; if (j.progress) P = normProg(j.progress);
       save(); tab = 'ahora'; render(); toast(j.progress ? 'Respaldo cargado' : 'Plantilla cargada');
-    } catch { toast('El archivo no es un respaldo ni una plantilla del Cuaderno'); }
+    } catch { toast('El archivo no es un respaldo ni una plantilla de Calculai'); }
   };
   r.readAsText(f);
 }
@@ -821,13 +835,13 @@ function endFocus(){ if (F && F.elapsed >= 60){ P.sessions.push({at:iso(TODAY), 
 function renderFocus(){
   const el = $('#focus'); if (!F) return;
   const step = F.steps[F.idx], tot = step.min * 60, frac = F.left / tot, C = 2 * Math.PI * 100;
-  document.title = F.end ? 'Cuaderno' : `${pad(Math.floor(F.left / 60))}:${pad(F.left % 60)} · ${step.t}`;
+  document.title = F.end ? 'Calculai' : `${pad(Math.floor(F.left / 60))}:${pad(F.left % 60)} · ${step.t}`;
   el.replaceChildren(h('div', {class:'focus-in', style:scs(F.t.subj)},
-    h('div', {class:'focus-top'}, h('div', null, subjChip(F.t.subj), ' ', h('b', {class:'display', style:'font-size:1.15rem'}, F.t.title)), h('button', {class:'iconbtn', type:'button', onclick:() => { document.title = 'Cuaderno'; endFocus(); }, 'aria-label':'Salir del modo enfoque'}, 'Salir ✕')),
+    h('div', {class:'focus-top'}, h('div', null, subjChip(F.t.subj), ' ', h('b', {class:'display', style:'font-size:1.15rem'}, F.t.title)), h('button', {class:'iconbtn', type:'button', onclick:() => { document.title = 'Calculai'; endFocus(); }, 'aria-label':'Salir del modo enfoque'}, 'Salir ✕')),
     F.end ? h('div', {class:'card endpanel'},
       h('h2', {class:'display', style:'margin:0 0 4px'}, 'Sesión terminada'),
       h('p', {class:'muted', style:'margin:0 0 14px'}, `${plural(Math.round(F.elapsed / 60), 'minuto', 'minutos')} de trabajo. ¿Cómo quedó ${F.t.title}?`),
-      h('div', {class:'statusbar'}, STATUSES.filter(x => x.k !== 'pendiente').map(x => h('button', {class:'stbtn', type:'button', style:`--stc:var(--s-${x.k})`, 'aria-pressed':String(st(F.t.id) === x.k), onclick:() => { setStatus(F.t.id, x.k); toast(`${F.t.title}: ${x.l}`); document.title = 'Cuaderno'; endFocus(); }}, h('i', {class:'dot', style:`background:var(--s-${x.k})`}), x.l))),
+      h('div', {class:'statusbar'}, STATUSES.filter(x => x.k !== 'pendiente').map(x => h('button', {class:'stbtn', type:'button', style:`--stc:var(--s-${x.k})`, 'aria-pressed':String(st(F.t.id) === x.k), onclick:() => { setStatus(F.t.id, x.k); toast(`${F.t.title}: ${x.l}`); document.title = 'Calculai'; endFocus(); }}, h('i', {class:'dot', style:`background:var(--s-${x.k})`}), x.l))),
       h('p', {class:'note'}, 'Si dudas entre dos estados, elige el más bajo: el repaso llega antes y no pierdes nada.'))
     : h('div', null,
       h('div', {class:'focus-main'},
@@ -902,17 +916,189 @@ function makeExample(){
   return x;
 }
 
+
+/* =========================================================
+   CONECTAR CON WEBC / MOODLE
+   El conector corre dentro de WebC con tu sesión ya iniciada (inicio con Microsoft incluido):
+   Calculai nunca ve ni guarda tu contraseña.
+   ========================================================= */
+const APP_BASE = location.origin + location.pathname.replace(/[^/]*$/, '');
+const BOOKMARKLET = `javascript:(function(){var s=document.createElement('script');s.src='${APP_BASE}conector.js?v='+Date.now();document.body.appendChild(s);})();`;
+let pendingWebc = null;
+function webcSteps(){
+  const bm = h('a', {class:'btn hlbtn', href:BOOKMARKLET, title:'Arrástrame a tu barra de marcadores', onclick:e => { e.preventDefault(); toast('Arrastra este botón a tu barra de marcadores'); }}, '⟳ Enviar a Calculai');
+  return h('div', null,
+    h('ol', {class:'tiny', style:'padding-left:18px;margin:6px 0 12px;line-height:1.6'},
+      h('li', null, h('b', null, 'Guarda el botón amarillo como marcador: '), 'arrástralo a la barra de marcadores de tu navegador (en Chrome: Ctrl+Mayús+B la muestra).'),
+      h('li', null, 'Abre ', h('a', {href:'https://webc.uai.cl/my/courses.php', target:'_blank', rel:'noopener'}, 'WebC ↗'), ' e inicia sesión como siempre (con Microsoft).'),
+      h('li', null, 'Estando en WebC, toca el marcador «Enviar a Calculai», elige tus cursos y presiona «Enviar».'),
+      h('li', null, 'Vuelves aquí, revisas lo que llegó y lo guardas.')),
+    h('div', {style:'display:flex;gap:10px;flex-wrap:wrap;align-items:center'}, bm, h('span', {class:'tiny muted'}, '← arrástrame a la barra de marcadores')),
+    h('details', {style:'margin-top:12px'}, h('summary', {class:'tiny', style:'cursor:pointer;font-weight:700'}, '¿No puedes arrastrarlo? (por ejemplo, en el celular)'),
+      h('p', {class:'tiny muted'}, 'Crea un marcador cualquiera, edítalo y pega este texto como dirección. En el celular, después lo abres escribiendo su nombre en la barra de direcciones mientras estás en WebC. Es más cómodo hacerlo en el computador y luego pasar tus datos con «Pasar a otro dispositivo».'),
+      h('div', {style:'display:flex;gap:8px;align-items:center'}, h('input', {type:'text', readonly:true, value:BOOKMARKLET, style:'flex:1;min-width:0;font-family:JetBrains Mono,monospace;font-size:.72rem;border:1px solid var(--line-2);border-radius:8px;padding:6px;background:var(--card-2);color:var(--ink)', onclick:e => e.target.select()}),
+        h('button', {class:'btn ghost small', type:'button', onclick:async () => { try { await navigator.clipboard.writeText(BOOKMARKLET); toast('Copiado'); } catch { toast('Selecciona el texto y cópialo'); } }}, 'Copiar'))),
+    h('p', {class:'tiny muted', style:'margin-top:12px'}, '¿Por qué así? WebC usa inicio de sesión con Microsoft, así que una app externa no puede entrar por ti con usuario y contraseña. El marcador usa tu sesión ya abierta en WebC: lee lo mismo que tú ves y se lo pasa a Calculai, sin contraseñas y sin servidores intermedios. Funciona también con otros Moodle.'));
+}
+function webcCard(){
+  return h('section', {class:'edit-sec card', style:'border:2px solid var(--ink)'},
+    h('h3', {class:'display', style:'margin:0 0 4px;font-size:1.15rem'}, '⟳ Conectar con WebC'),
+    h('p', {class:'tiny muted', style:'margin:0 0 6px'}, D.sync && D.sync.webc ? `Última lectura: ${fmtD(parse(D.sync.webc.at.slice(0, 10)))} desde ${D.sync.webc.origin.replace(/^https?:\/\//, '')}. Repite el paso 3 cuando quieras actualizar: no se duplica nada.` : 'Trae tus cursos, las fechas del calendario de WebC, los recursos publicados y los avisos de los profesores.'),
+    webcSteps());
+}
+function openWebcHelp(){
+  $('#drawer').classList.add('wide');
+  openDrawer(h('div', {class:'drawer-head'}, h('div', {style:'flex:1'}, h('h3', null, 'Conectar con WebC')), h('button', {class:'iconbtn', type:'button', 'aria-label':'Cerrar', onclick:closeDrawer}, '✕')), h('div', {class:'drawer-body'}, webcSteps()));
+}
+async function shareToDevice(){
+  const name = `calculai-respaldo-${iso(TODAY)}.json`, txt = JSON.stringify({app:'calculai', v:1, data:D, progress:P});
+  try {
+    const f = new File([txt], name, {type:'application/json'});
+    if (navigator.canShare && navigator.canShare({files:[f]})){ await navigator.share({files:[f], title:'Mi Calculai', text:'Ábrelo en Calculai → Abrir archivo'}); return; }
+  } catch (e) { if (e && e.name === 'AbortError') return; }
+  download(name, txt, 'application/json');
+  toast('Descargado: envíatelo (correo, WhatsApp, Drive) y ábrelo en Calculai del otro equipo');
+}
+/* Recepción desde el conector */
+window.addEventListener('message', ev => {
+  const d = ev.data; if (!d || typeof d !== 'object') return;
+  if (d.type === 'calculai-ping' && ev.source){ try { ev.source.postMessage({type:'calculai-ready'}, ev.origin); } catch {} return; }
+  if (d.type === 'calculai-webc' && Array.isArray(d.courses)){
+    try { ev.source && ev.source.postMessage({type:'calculai-received'}, ev.origin); } catch {}
+    d.origin = d.origin || ev.origin; receiveWebc(d);
+  }
+});
+if (window.opener && /[?&]from=webc/.test(location.search)){ try { window.opener.postMessage({type:'calculai-ready'}, '*'); } catch {} }
+function receiveWebc(d){ pendingWebc = prepareWebc(d); closeDrawer(); tab = 'webc'; render(); window.scrollTo({top:0}); }
+
+const MONTHS = {ene:0, enero:0, jan:0, feb:1, febrero:1, mar:2, marzo:2, abr:3, abril:3, apr:3, may:4, mayo:4, jun:5, junio:5, jul:6, julio:6, ago:7, agosto:7, aug:7, sep:8, sept:8, set:8, septiembre:8, setiembre:8, oct:9, octubre:9, nov:10, noviembre:10, dic:11, diciembre:11, dec:11};
+const DATE_RE = /(?:\b(?:lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo)\s+)?\b(\d{1,2})\s*(?:de\s+)?(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre|ene|feb|mar|abr|may|jun|jul|ago|sept?|set|oct|nov|dic|jan|apr|aug|dec)\b\.?(?:\s+(?:de\s+|del\s+)?(\d{4}))?/gi;
+function kindOf(t){ t = norm(t); if (/examen/.test(t)) return 'examen'; if (/\bprueba|certamen|solemne/.test(t)) return 'prueba'; if (/\bcontrol/.test(t)) return 'control'; if (/proyecto/.test(t)) return 'proyecto'; if (/entrega|plazo|informe|\blab|tarea|buzon|bitacora|cierra/.test(t)) return 'entrega'; return 'otro'; }
+function newsDate(n){ if (!n.date) return null; const p = n.date.split('|'); if (p.length < 3) return n.date.slice(0, 10); const m = MONTHS[norm(p[1])]; return m == null ? null : iso(new Date(+p[0], m, +p[2])); }
+function extractDates(n){
+  const out = [], post = newsDate(n), postD = post ? parse(post) : TODAY;
+  const re = new RegExp(DATE_RE.source, 'gi');
+  const lines = String(n.text || '').split(/\n+/).map(l => l.trim()).filter(Boolean);
+  lines.forEach(line => {
+    if (/^de\s+.+\s-\s\w+,\s+\d/.test(line)) return; // cabecera del post
+    let m; re.lastIndex = 0;
+    while ((m = re.exec(line))){
+      const day = +m[1], mon = MONTHS[norm(m[2])]; if (mon == null || day < 1 || day > 31) continue;
+      let y = m[3] ? +m[3] : postD.getFullYear(); let d = new Date(y, mon, day);
+      if (!m[3] && d < addDays(postD, -60)) d = new Date(y + 1, mon, day);
+      const after = line.slice(m.index + m[0].length, m.index + m[0].length + 40), before = line.slice(Math.max(0, m.index - 25), m.index);
+      const tm = after.match(/(?:a\s+las\s+|,\s*|\s)(\d{1,2})(?::|\.|h)(\d{2})(?:\s*(?:-|–|a)\s*(\d{1,2})(?::|\.)(\d{2}))?/) || before.match(/(\d{1,2}):(\d{2})\s*$/) || after.match(/a\s+las\s+(\d{1,2})\s*(?:hrs?|horas)/);
+      let time = '';
+      if (tm){ const H = +tm[1], Mi = tm[2] && tm[2].length === 2 ? tm[2] : '00'; if (H <= 23){ time = `${pad(H)}:${Mi}`; if (tm[3]) time += `–${pad(+tm[3])}:${tm[4]}`; } }
+      let name = line.replace(new RegExp(DATE_RE.source, 'gi'), '').replace(/(?:a\s+las\s+)?\d{1,2}[:.h]\d{2}(\s*(hrs?|horas))?/gi, '').replace(/\b(lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo)\b/gi, '').replace(/\(\s*\)/g, '').replace(/\s{2,}/g, ' ').replace(/^[\s:,.\-–]+|[\s:,.\-–]+$/g, '');
+      const kw = line.match(/\b(prueba|control|examen|certamen|solemne|entrega|informe|laboratorio|lab\s?\d*|proyecto|tarea|interrogaci[oó]n|bit[aá]cora)\b[^.,;\n]{0,48}/i);
+      if (kw){ let k2 = kw[0].replace(new RegExp(DATE_RE.source, 'gi'), '').replace(/(?:a\s+las\s+)?\d{1,2}[:.h]\d{2}(\s*(hrs?|horas))?/gi, '').replace(/\b(lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo)\b/gi, '').replace(/\s+(es|ser[aá]n?|se|queda|qued[oó]|cambia|para|el\s+d[ií]a|hasta|a\s+partir)\b.*$/i, '').replace(/\s{2,}/g, ' ').trim(); if (k2.length >= 3) name = k2.charAt(0).toUpperCase() + k2.slice(1); }
+      if (name.length < 3) name = n.title; if (name.length > 70) name = name.slice(0, 67) + '…';
+      out.push({date:iso(d), time, kind:kindOf(line + ' ' + (name === n.title ? n.title : '')), name, line:line.slice(0, 220)});
+    }
+  });
+  return out;
+}
+function cleanEvName(s){ return String(s || '').replace(/^Vencimiento de\s+/i, '').replace(/^La entrega de\s+/i, '').trim(); }
+function prepareWebc(d){
+  const P2 = {origin:d.origin || '', at:d.at || new Date().toISOString(), courses:[]};
+  (d.courses || []).forEach((c, ci) => {
+    const byCode = c.code && D.subjects.find(s => s.code && s.code.toUpperCase() === c.code.toUpperCase());
+    const byWebc = D.subjects.find(s => s.webc === c.id);
+    const byName = D.subjects.find(s => norm(s.name).startsWith(norm(c.name).split(' ')[0]));
+    const target = (byWebc || byCode || byName || {}).id || 'new';
+    const subjFor = target === 'new' ? null : target;
+    const evs = (c.events || []).filter(e => e.ts).map(e => { const dt = new Date(e.ts * 1000); const id = 'cal:' + e.id; const exist = D.events.find(x => x.webc === id);
+      return {sel: dt >= addDays(TODAY, -1) || !!exist, id, date:iso(dt), time:`${pad(dt.getHours())}:${pad(dt.getMinutes())}`, name:cleanEvName(e.name), kind:/assign/.test(e.type) ? 'entrega' : /quiz/.test(e.type) ? 'control' : 'entrega', url:e.url || '', exist:!!exist}; });
+    const sugg = []; const seen = new Set();
+    (c.news || []).forEach(n => extractDates(n).forEach((x, k) => {
+      const key = x.date + '|' + norm(x.name); if (seen.has(key)) return; seen.add(key);
+      if (parse(x.date) < addDays(TODAY, -1)) return;
+      const id = 'news:' + n.id + ':' + x.date + ':' + norm(x.name).slice(0, 20);
+      const dup = subjFor && D.events.find(e => e.subj === subjFor && e.date === x.date && (e.webc === id || norm(e.name) === norm(x.name) || e.kind === x.kind));
+      const already = D.events.find(e => e.webc === id);
+      const calDup = evs.some(e => e.date === x.date && e.kind === x.kind);
+      sugg.push({...x, id, newsTitle:n.title, newsUrl:n.url, newsDate:newsDate(n), sel:!already && !dup && !calDup && x.kind !== 'otro', dup:!!(already || dup), calDup});
+    }));
+    P2.courses.push({c, include:true, target, evs, sugg, addRes:true, addNews:true});
+  });
+  return P2;
+}
+function vWebcReview(v){
+  const W2 = pendingWebc;
+  if (!W2){ tab = 'ahora'; render(); return; }
+  v.append(h('div', {class:'sec-title'}, h('h2', null, 'Datos de WebC'), h('span', {class:'hand'}, 'revisa antes de guardar')));
+  v.append(h('p', {class:'muted', style:'margin:0'}, `Llegaron desde ${W2.origin.replace(/^https?:\/\//, '')} (${fmtD(parse(W2.at.slice(0, 10)))}). Nada se guarda hasta que presiones «Guardar en Calculai». Al repetir la conexión, lo ya importado se actualiza en vez de duplicarse.`));
+  W2.courses.forEach(row => {
+    const c = row.c;
+    const opts = [['new', '➕ Crear materia nueva'], ...D.subjects.map(s => [s.id, '↔ Unir con «' + s.name + '»'])];
+    const sel = h('select', {onchange:e => { row.target = e.target.value; }}, opts.map(([k, l]) => { const o = h('option', {value:k}, l); if (row.target === k) o.selected = true; return o; }));
+    const card = h('section', {class:'card', style:'margin-top:16px'},
+      h('div', {style:'display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center'},
+        h('label', {class:'chk'}, h('input', {type:'checkbox', checked:row.include || null, onchange:e => { row.include = e.target.checked; render(); }}), h('span', null, c.name, ' ', h('small', {class:'muted', style:'font-weight:400'}, [c.code, c.section].filter(Boolean).join(' · ')))),
+        row.include ? h('label', {class:'field', style:'min-width:230px'}, sel) : null));
+    if (row.include){
+      if (row.evs.length) card.append(h('h4', {class:'wh'}, `Fechas del calendario de WebC (${row.evs.length})`), h('div', {class:'wlist'}, row.evs.map(e => h('label', {class:'wrow'},
+        h('input', {type:'checkbox', checked:e.sel || null, onchange:ev => e.sel = ev.target.checked}),
+        h('span', null, h('b', null, e.name), h('small', null, ` · ${cap(fmtD(parse(e.date)))} · ${e.time}${e.exist ? ' · se actualizará' : ''}`))))));
+      card.append(h('h4', {class:'wh'}, `Fechas encontradas en los avisos (${row.sugg.length})`));
+      if (!row.sugg.length) card.append(h('p', {class:'tiny muted'}, c.news.length ? 'No encontré fechas futuras en los avisos recientes.' : 'Este curso no tiene un foro de avisos que pueda leer.'));
+      else card.append(h('p', {class:'tiny muted', style:'margin:0 0 6px'}, 'Las detecté leyendo el texto de los avisos: revisa nombre, tipo y fecha, y desmarca las que no correspondan.'),
+        h('div', {class:'wlist'}, row.sugg.map(x => h('div', {class:'wrow sugg'},
+          h('input', {type:'checkbox', checked:x.sel || null, 'aria-label':'Importar', onchange:ev => x.sel = ev.target.checked}),
+          h('div', {style:'min-width:0;flex:1'},
+            h('div', {class:'srow'},
+              h('select', {onchange:ev => x.kind = ev.target.value}, Object.entries(KIND).map(([k, o]) => { const op = h('option', {value:k}, o.l); if (x.kind === k) op.selected = true; return op; })),
+              h('input', {type:'text', value:x.name, oninput:ev => x.name = ev.target.value, 'aria-label':'Nombre'}),
+              h('input', {type:'date', value:x.date, oninput:ev => x.date = ev.target.value, 'aria-label':'Fecha'}),
+              h('input', {type:'text', value:x.time, placeholder:'hora', oninput:ev => x.time = ev.target.value, style:'width:110px', 'aria-label':'Hora'})),
+            h('div', {class:'tiny muted', style:'margin-top:4px'}, '«' + x.line + '» — aviso ', x.newsUrl ? h('a', {href:x.newsUrl, target:'_blank', rel:'noopener'}, x.newsTitle) : x.newsTitle, x.dup ? h('b', {style:'color:var(--margin)'}, ' · ya está en tu calendario') : x.calDup ? h('b', {style:'color:var(--margin)'}, ' · parece repetir una fecha del calendario de WebC') : null))))));
+      card.append(h('div', {style:'display:flex;gap:16px;flex-wrap:wrap;margin-top:12px'},
+        h('label', {class:'chk'}, h('input', {type:'checkbox', checked:row.addRes || null, onchange:e => row.addRes = e.target.checked}), `Agregar ${plural(c.resources.length, 'recurso', 'recursos')} (archivos, guías, enlaces)`),
+        h('label', {class:'chk'}, h('input', {type:'checkbox', checked:row.addNews || null, onchange:e => row.addNews = e.target.checked}), `Guardar ${plural(c.news.length, 'aviso', 'avisos')} para leerlos aquí`)));
+    }
+    v.append(card);
+  });
+  v.append(h('div', {style:'display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:18px;position:sticky;bottom:12px;background:var(--card);border:1px solid var(--line-2);border-radius:14px;padding:10px 12px;box-shadow:var(--shadow);z-index:5'},
+    h('button', {class:'btn hlbtn', type:'button', onclick:applyWebc}, '✓ Guardar en Calculai'),
+    h('button', {class:'btn ghost', type:'button', onclick:() => { pendingWebc = null; go(D.subjects.length ? 'ahora' : 'ahora'); }}, 'Cancelar')));
+}
+function applyWebc(){
+  const W2 = pendingWebc; if (!W2) return;
+  let nS = 0, nE = 0, nU = 0, nR = 0, nN = 0;
+  W2.courses.filter(r => r.include).forEach(row => {
+    const c = row.c; let sid = row.target;
+    if (sid === 'new'){ sid = uid('s'); D.subjects.push({id:sid, name:c.name, short:c.short || c.name.split(' ')[0], code:c.code || '', color:COLORS[D.subjects.length % COLORS.length], prof:c.section || '', note:'Importada desde WebC.', webc:c.id, url:c.url}); nS++; }
+    else { const s = D.subjects.find(x => x.id === sid); if (s){ s.webc = c.id; s.url = s.url || c.url; } }
+    row.evs.filter(e => e.sel).forEach(e => {
+      const ex = D.events.find(x => x.webc === e.id);
+      const n = {subj:sid, kind:e.kind, name:e.name, date:e.date, time:e.time, slot:'', ver:true, src:`WebC · calendario del curso (${fmtD(parse(W2.at.slice(0, 10)))})`, topics:[], scopeNote:'', note:'', webc:e.id, url:e.url};
+      if (ex){ Object.assign(ex, n); nU++; } else { D.events.push({id:uid('ev'), ...n}); nE++; }
+    });
+    row.sugg.filter(x => x.sel && x.date).forEach(x => {
+      const ex = D.events.find(e => e.webc === x.id);
+      const n = {subj:sid, kind:x.kind, name:x.name.trim() || x.newsTitle, date:x.date, time:(x.time || '').trim(), slot:'', ver:true, src:`WebC · aviso «${x.newsTitle}»${x.newsDate ? ' (' + fmtD(parse(x.newsDate)) + ')' : ''}`, topics:[], scopeNote:'', note:'Fecha leída automáticamente del aviso y revisada por ti al importar.', webc:x.id};
+      if (ex){ Object.assign(ex, n); nU++; } else { D.events.push({id:uid('ev'), ...n}); nE++; }
+    });
+    if (row.addRes) c.resources.forEach(r => { if (!D.resources.some(x => x.url === r.url)){ D.resources.push({id:uid('r'), subj:sid, title:r.name, kind:({resource:'Archivo', url:'Enlace', folder:'Carpeta', page:'Página', assign:'Tarea', quiz:'Cuestionario', book:'Libro'}[r.type] || 'Recurso') + (r.section ? ' · ' + r.section : ''), url:r.url, webc:true}); nR++; } });
+    if (row.addNews){ D.news = (D.news || []).filter(n => n.subj !== sid); c.news.forEach(n => D.news.push({id:'n-' + n.id, subj:sid, title:n.title, url:n.url, author:n.author, date:newsDate(n), text:n.text})); nN += c.news.length; }
+  });
+  D.sync = D.sync || {}; D.sync.webc = {origin:W2.origin, at:W2.at};
+  pendingWebc = null; save(); go('ahora');
+  toast(`WebC: ${nS} materias nuevas · ${nE} fechas nuevas · ${nU} actualizadas · ${nR} recursos · ${nN} avisos`);
+}
+
 /* =========================================================
    TEMA, PWA, ARRANQUE
    ========================================================= */
 function toggleTheme(){
   const r = document.documentElement, darkNow = r.dataset.theme ? r.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
-  r.dataset.theme = darkNow ? 'light' : 'dark'; try { localStorage.setItem('cuaderno-theme', r.dataset.theme); } catch {}
+  r.dataset.theme = darkNow ? 'light' : 'dark'; try { localStorage.setItem('calculai-theme', r.dataset.theme); } catch {}
   const mt = document.querySelector('meta[name=theme-color]'); if (mt) mt.content = r.dataset.theme === 'dark' ? '#0c2140' : '#f5f2e8';
   if (tab === 'mapa') render();
 }
 function syncBadge(){ const el = $('#sync'); if (!el) return; el.dataset.s = storageOk ? 'local' : 'none'; $('#syncTxt').textContent = storageOk ? 'Guardado en este dispositivo' : 'Sin guardar (descarga un respaldo)'; }
-try { const th = localStorage.getItem('cuaderno-theme'); if (th) document.documentElement.dataset.theme = th; } catch {}
+try { const th = localStorage.getItem('calculai-theme'); if (th) document.documentElement.dataset.theme = th; } catch {}
 document.addEventListener('DOMContentLoaded', () => {
   $('#todayLbl').textContent = cap(fmtD(TODAY)) + ' · ' + TODAY.getFullYear();
   $('#themeBtn').addEventListener('click', toggleTheme);
