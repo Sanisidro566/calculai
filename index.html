@@ -21,6 +21,7 @@
 <a href="#view" class="sr">Saltar al contenido</a>
 <header class="top">
   <div class="top-in">
+    <button class="iconbtn sidebar-toggle" type="button" id="sidebarBtn" aria-label="Menú">☰</button>
     <div class="brand">
       <div class="logo" aria-hidden="true">C</div>
       <div><b>Calculai</b><small id="todayLbl"></small></div>
@@ -31,9 +32,12 @@
     <button class="iconbtn" type="button" id="palBtn" aria-label="Buscar o saltar (Ctrl+K)">⌕ <span class="kbd hide-sm">Ctrl K</span></button>
     <button class="iconbtn" type="button" id="themeBtn" aria-label="Cambiar tema claro u oscuro" style="font-size:1.15rem">◐</button>
   </div>
-  <nav class="tabs" role="tablist" id="tabs"></nav>
 </header>
+<aside class="sidebar" id="sidebar">
+  <nav class="sidenav" role="tablist" id="tabs"></nav>
+</aside>
 <main class="wrap" id="view"></main>
+<nav class="bottomnav" id="bottomnav" role="tablist"></nav>
 <div class="scrim" id="scrim"></div>
 <aside class="drawer" id="drawer" aria-hidden="true" aria-label="Panel"></aside>
 <section class="focus" id="focus" aria-label="Modo enfoque"></section>

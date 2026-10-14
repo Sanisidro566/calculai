@@ -5,11 +5,15 @@ Aplicación web de estudio, gratuita y sin cuentas. Funciona en cualquier navega
 ## Qué hace
 - **Ahora:** arma un plan para la próxima hora según tus fechas y tu avance, y explica por qué eligió ese tema. Incluye modo enfoque con temporizador.
 - **Próximas 72 horas:** muestra las evaluaciones y entregas que vienen.
+- **Clases:** todas tus clases ordenadas por materia, con buscador, «continuar donde quedaste» y un lector dentro de la app. El material de Google Drive, Docs, YouTube o PDF se ve dentro de Calculai; lo de WebC se abre aparte porque Moodle lo exige.
+- **Adaptar con IA:** en cada clase puedes pedir una explicación más simple, más ejemplos, un resumen, errores frecuentes o ejercicios, y contarle qué te cuesta. Usa tu propia API key (guardada solo en tu navegador) o copia la instrucción para pegarla en tu asistente.
 - **Mapa:** temas con prerrequisitos y estado (Pendiente, Aprendiendo, Practicado, Necesita repaso, Dominado), más repaso espaciado.
 - **Práctica:** preguntas de alternativas o numéricas, con fórmulas ($…$). Antes de responder dices qué tan seguro estás, y la app mide tu calibración.
 - **Errores:** los errores se guardan solos y puedes anotar su causa.
-- **Calendario:** vista mensual y agenda. Cada fecha muestra si está confirmada o no. Se exporta como `.ics` (Google, Apple, Outlook) o como CSV.
+- **Calendario:** vista mensual y agenda, con horas disponibles por día y bloques por materia. Cada fecha muestra si está confirmada o no. Se exporta como `.ics` (Google, Apple, Outlook) o como CSV.
 - **Conectar con WebC (o cualquier Moodle):** un marcador «Enviar a Calculai» lee tus cursos, las fechas del calendario, los recursos y los avisos desde tu sesión abierta de WebC (sirve aunque entres con Microsoft). Calculai detecta fechas dentro de los avisos y te las muestra como sugerencias para que las confirmes. No usa contraseñas ni servidores intermedios.
+- **Revisión automática al abrir:** con el script `calculai-sync.user.js` (Tampermonkey), cada vez que abres Calculai se revisa WebC con tu sesión: se agregan fechas del calendario del curso, avisos y recursos nuevos; las fechas leídas en avisos quedan en «Para revisar».
+- **Outlook (opcional):** con un registro de app de Microsoft (solo lectura de correo), Calculai lee los correos de WebC o de tus cursos al abrirse y propone sus fechas.
 - **Editar:** materias, evaluaciones, temas, ejercicios y recursos. Tiene respaldo completo y «plantilla para compartir» con compañeros (sin el progreso).
 
 ## Privacidad
@@ -46,5 +50,7 @@ python3 -m http.server 8000
 | `app.js` | Toda la lógica |
 | `sw.js` | Modo sin internet |
 | `conector.js` | Conector que se ejecuta dentro de WebC/Moodle desde el marcador |
+| `calculai-sync.user.js` | Script de revisión automática de WebC (Tampermonkey) |
+| `oauth.html` | Retorno del inicio de sesión de Microsoft (Outlook) |
 | `manifest.webmanifest`, `icons/` | Instalación como app |
 | `vendor/katex.min.js` | Fórmulas matemáticas (KaTeX, licencia MIT) |

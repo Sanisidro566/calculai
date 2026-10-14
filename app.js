@@ -30,7 +30,14 @@ function rich(s){
       if (window.katex){ try { katex.render(tex, m, {output:'mathml', throwOnError:false}); } catch { m.textContent = tex; } }
       else { m.textContent = tex; m.className = 'm mono'; }
       span.append(m);
-    } else if (part) span.append(part);
+    } else if (part) {
+      // Handle **bold** and *italic*
+      part.split(/(\*\*[^*]+\*\*|\*[^*]+\*)/).forEach(seg => {
+        if (seg.startsWith('**') && seg.endsWith('**')) span.append(h('strong', null, seg.slice(2, -2)));
+        else if (seg.startsWith('*') && seg.endsWith('*')) span.append(h('em', null, seg.slice(1, -1)));
+        else if (seg) span.append(seg);
+      });
+    }
   });
   return span;
 }
@@ -67,7 +74,7 @@ const SL = Object.fromEntries(STATUSES.map(s => [s.k, s.l]));
 const INTERVAL = {aprendiendo:1, practicado:3, repaso:1, dominado:7};
 const STORE = 'calculai:v1', OLD_STORE = 'cuaderno-web:v1';
 const blankData = () => ({v:1, owner:'', subjects:[], events:[], topics:[], items:[], resources:[], news:[], sync:{}});
-const blankProg = () => ({status:{}, attempts:[], errors:[], days:{}, sessions:[]});
+const blankProg = () => ({status:{}, attempts:[], errors:[], days:{}, sessions:[], dayLoad:{}, lastLesson:''});
 function normData(d){ const b = blankData(); if (!d || typeof d !== 'object') return b; for (const k of Object.keys(b)) if (d[k] != null && typeof d[k] === typeof b[k]) b[k] = d[k]; return b; }
 function normProg(p){ const b = blankProg(); if (!p || typeof p !== 'object') return b; for (const k of Object.keys(b)) if (p[k] != null && typeof p[k] === typeof b[k]) b[k] = p[k]; return b; }
 let D = blankData(), P = blankProg(), storageOk = true;
@@ -116,18 +123,18 @@ function score(t){
 }
 function ranked(){ return D.topics.map(t => ({t, ...score(t)})).filter(x => x.u > 0 && (st(x.t.id) !== 'dominado' || isDue(x.t.id))).sort((a, b) => b.u - a.u); }
 function buildSession(t){
-  const s = st(t.id), url = t.url || null;
+  const s = st(t.id);
   const lbl = (t.code ? t.code + ' · ' : '') + t.title;
   if (s === 'pendiente' || s === 'aprendiendo') return [
     {min:5, t:'Calentamiento sin mirar', d:'Escribe en papel lo que ya sabes (o crees saber) del tema. Sirve aunque sea poco.'},
-    {min:25, t:'Clase', d:`Lee y rehace los ejemplos de ${lbl}.`, link:url, linkLbl:'Abrir material'},
+    {min:25, t:'Clase', d:`Lee y rehace los ejemplos de ${lbl}.`, lesson:t.id},
     {min:15, t:'Práctica', d:'Ejercicios del más fácil al más difícil.', practice:t.id},
     {min:5, t:'Errores', d:'Anota cada error y por qué ocurrió.', go:'errores'},
     {min:5, t:'Autoevaluación', d:'Marca cómo quedó el tema. «Necesita repaso» también es avance.'}
   ];
   return [
     {min:5, t:'Recuperar de memoria', d:'Sin abrir nada: fórmulas, pasos y errores típicos del tema.'},
-    {min:10, t:'Repaso rápido', d:'Solo lo que no recordaste.', link:url, linkLbl:'Abrir material'},
+    {min:10, t:'Repaso rápido', d:'Solo lo que no recordaste.', lesson:t.id},
     {min:30, t:'Práctica mixta', d:'Ejercicios de este tema y de los anteriores.', practice:t.id},
     {min:10, t:'Errores', d:'Reintenta los errores pendientes de esta materia.', go:'errores'},
     {min:5, t:'Autoevaluación', d:'Actualiza el estado del tema.'}
@@ -149,23 +156,34 @@ function daySuggest(d){
 /* =========================================================
    NAVEGACIÓN
    ========================================================= */
-const TABS = [{k:'ahora', l:'Ahora'}, {k:'mapa', l:'Mapa'}, {k:'practica', l:'Práctica'}, {k:'errores', l:'Errores'}, {k:'cal', l:'Calendario'}, {k:'biblio', l:'Biblioteca'}, {k:'editar', l:'Editar'}];
+const TABS = [{k:'ahora', l:'Ahora', i:'◎'}, {k:'clases', l:'Clases', i:'▤'}, {k:'mapa', l:'Mapa', i:'◇'}, {k:'practica', l:'Práctica', i:'✎'}, {k:'errores', l:'Errores', i:'⚠'}, {k:'cal', l:'Calendario', s:'Agenda', i:'▦'}, {k:'biblio', l:'Biblioteca', s:'Biblio', i:'❏'}, {k:'editar', l:'Editar', i:'⚙'}];
 let tab = 'ahora', mapSubj = null, planPick = 0, pracFilter = 'todo', selDay = null;
 try { const t = sessionStorage.getItem('calculai-tab'); if (t && TABS.some(x => x.k === t)) tab = t; } catch {}
-function go(k){ tab = k; try { sessionStorage.setItem('calculai-tab', k); } catch {} render(); window.scrollTo({top:0}); }
+function go(k){ tab = k; try { sessionStorage.setItem('calculai-tab', k); } catch {} closeSidebar(); render(); window.scrollTo({top:0}); }
+function closeSidebar(){ const sb = $('#sidebar'); if (sb) sb.classList.remove('open'); const sc = $('#scrim'); if (sc) sc.classList.remove('on'); }
 function renderTabs(){
   const nav = $('#tabs'); nav.replaceChildren();
+  const bnav = $('#bottomnav'); if (bnav) bnav.replaceChildren();
   if (!D.subjects.length) return;
   const openErr = P.errors.filter(e => !e.resolved).length;
-  TABS.forEach(t => nav.append(h('button', {class:'tab', role:'tab', type:'button', 'aria-selected':String(tab === t.k), onclick:() => go(t.k)}, t.l,
-    t.k === 'errores' && openErr ? h('span', {class:'count'}, openErr) : null)));
+  TABS.forEach(t => {
+    const cnt = t.k === 'errores' && openErr ? openErr : 0;
+    const onTab = () => { if (t.k === 'clases' && tab === 'clases') lessonOpen = null; go(t.k); };
+    nav.append(h('button', {class:'tab', role:'tab', type:'button', 'aria-selected':String(tab === t.k), onclick:onTab},
+      h('span', {class:'ti'}, t.i), t.l,
+      cnt ? h('span', {class:'count'}, cnt) : null));
+    if (bnav) bnav.append(h('button', {class:'btab', role:'tab', type:'button', 'aria-selected':String(tab === t.k), onclick:onTab},
+      h('span', {class:'ti'}, t.i),
+      cnt ? h('span', {class:'count'}, cnt) : null,
+      t.s || t.l));
+  });
 }
 function render(){
   renderTabs();
   const v = $('#view'); v.replaceChildren();
   if (!D.subjects.length && tab !== 'webc'){ vWelcome(v); return; }
   if (tab === 'webc'){ vWebcReview(v); return; }
-  ({ahora:vAhora, mapa:vMapa, practica:vPractica, errores:vErrores, cal:vCal, biblio:vBiblio, editar:vEditar})[tab](v);
+  ({ahora:vAhora, clases:vClases, mapa:vMapa, practica:vPractica, errores:vErrores, cal:vCal, biblio:vBiblio, editar:vEditar})[tab](v);
 }
 const subjChip = s => h('span', {class:'chip subj-chip', style:scs(s)}, h('span', {class:'dot', style:'background:var(--sc)'}), S(s).short);
 const scopeTag = sc => sc ? h('span', {class:`scope ${sc}`}, SCOPE_LBL[sc]) : null;
@@ -206,9 +224,12 @@ function vAhora(v){
   const first = upcoming[0];
   v.append(h('div', {class:'hello'},
     h('div', null, h('h1', null, saludo + (D.owner ? ', ' + D.owner : '') + '. ', h('span', {class:'hl'}, '¿Qué hago ahora?')),
-      D.sync && D.sync.webc ? h('p', {class:'tiny muted', style:'margin:2px 0 0'}, `WebC leído ${agoTxt(diffDays(parse(D.sync.webc.at.slice(0, 10)), TODAY))} · `, h('a', {href:'#', onclick:e => { e.preventDefault(); openWebcHelp(); }}, 'actualizar')) : null,
+      syncStrip(),
       h('p', null, first ? `Próximos 30 días: ${plural(upcoming.length, 'evaluación', 'evaluaciones')}. La más cercana: ${S(first.subj).short} · ${first.name}, ${countdown(diffDays(TODAY, parse(first.date)))}.` : 'No tienes evaluaciones en los próximos 30 días. Agrégalas en Editar.'))));
 
+  const ib = inboxCard(); if (ib) v.append(ib);
+  const lastL = P.lastLesson && topic(P.lastLesson);
+  if (lastL) v.append(h('button', {class:'card cl-cont cl-strip', type:'button', style:scs(lastL.subj), onclick:() => openLesson(lastL.id)}, h('small', {class:'kicker'}, '▤ Continuar tu clase'), h('b', null, lastL.title), h('span', {class:'tiny muted'}, S(lastL.subj).name + ' · ' + (hasLesson(lastL) ? readMin(lastL) + ' min de lectura' : 'material del curso'))));
   if (upcoming.length){
     const end = addDays(parse(upcoming.at(-1).date), 1), span = Math.max(1, diffDays(TODAY, end));
     const track = h('div', {class:'track', 'aria-hidden':'true'}, h('div', {class:'track-line'}), h('div', {class:'track-today'}, h('span', null, 'hoy')));
@@ -238,7 +259,7 @@ function vAhora(v){
       h('ol', {class:'steps'}, steps.map(s => h('li', null,
         h('span', {class:'min'}, s.min + "'"),
         h('div', null, h('div', {class:'st-t'}, s.t), h('div', {class:'st-d'}, s.d)),
-        s.link ? extLink(s.link, s.linkLbl) : s.go ? h('button', {class:'btn ghost small', type:'button', onclick:() => go(s.go)}, 'Ver') : s.practice && D.items.some(i => i.topic === s.practice) ? h('button', {class:'btn ghost small', type:'button', onclick:() => { pracFilter = s.practice; Q = null; go('practica'); }}, 'Practicar') : h('span')))),
+        s.lesson ? h('button', {class:'btn ghost small', type:'button', onclick:() => openLesson(s.lesson)}, 'Abrir clase') : s.go ? h('button', {class:'btn ghost small', type:'button', onclick:() => go(s.go)}, 'Ver') : s.practice && D.items.some(i => i.topic === s.practice) ? h('button', {class:'btn ghost small', type:'button', onclick:() => { pracFilter = s.practice; Q = null; go('practica'); }}, 'Practicar') : h('span')))),
       h('div', {class:'plan-foot'},
         h('button', {class:'btn hlbtn', type:'button', onclick:() => startFocus(t, steps)}, '▶ Empezar sesión'),
         h('button', {class:'btn ghost', type:'button', onclick:() => { planPick++; render(); }}, 'Otra sugerencia'),
@@ -336,6 +357,270 @@ function drawLinks(wrap, svgEl, ts){
     svgEl.append(svg('path', {d:`M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}`, class:W[st(pid)] >= 2 ? 'ready' : ''}));
   }));
 }
+function renderContent(txt){
+  if (!txt) return null;
+  const wrap = h('div', {class:'lesson-content'});
+  const blocks = txt.split(/\n{2,}/);
+  blocks.forEach(block => {
+    const trimmed = block.trim();
+    if (!trimmed) return;
+    if (trimmed.startsWith('# ')){ wrap.append(h('h3', {class:'lc-h'}, rich(trimmed.slice(2)))); return; }
+    if (trimmed.startsWith('## ')){ wrap.append(h('h4', {class:'lc-h'}, rich(trimmed.slice(3)))); return; }
+    if (trimmed.startsWith('### ')){ wrap.append(h('h5', {class:'lc-h'}, rich(trimmed.slice(4)))); return; }
+    if (trimmed.startsWith('- ') || trimmed.startsWith('* ')){
+      const items = trimmed.split('\n').filter(l => l.trim());
+      wrap.append(h('ul', {class:'lc-ul'}, items.map(l => h('li', null, rich(l.replace(/^[-*]\s*/, ''))))));
+      return;
+    }
+    if (/^\d+\.\s/.test(trimmed)){
+      const items = trimmed.split('\n').filter(l => l.trim());
+      wrap.append(h('ol', {class:'lc-ol'}, items.map(l => h('li', null, rich(l.replace(/^\d+\.\s*/, ''))))));
+      return;
+    }
+    if (trimmed.startsWith('> ')){
+      wrap.append(h('blockquote', {class:'lc-bq'}, rich(trimmed.replace(/^>\s?/gm, ''))));
+      return;
+    }
+    if (trimmed.startsWith('$$') && trimmed.endsWith('$$')){
+      const math = trimmed.slice(2, -2).trim();
+      const el = h('div', {class:'lc-math'});
+      try { if (window.katex) katex.render(math, el, {displayMode:true, output:'mathml', throwOnError:false}); else el.textContent = math; }
+      catch { el.textContent = math; }
+      wrap.append(el);
+      return;
+    }
+    wrap.append(h('p', {class:'lc-p'}, rich(trimmed.replace(/\n/g, ' '))));
+  });
+  return wrap;
+}
+/* =========================================================
+   CLASES — todo se lee dentro de Calculai
+   ========================================================= */
+let lessonOpen = null, classSubj = 'todas';
+function openLesson(id){ if (!topic(id)) return; lessonOpen = id; P.lastLesson = id; save(); closeDrawer(); go('clases'); }
+const hasLesson = t => !!(t.content && t.content.trim());
+const readMin = t => Math.max(1, Math.round(String(t.content || '').split(/\s+/).length / 180));
+function lessonOrder(sid){ const memo = {}; return topicsOf(sid).slice().sort((a, b) => depthOf(a, memo) - depthOf(b, memo) || (a.code || a.title).localeCompare(b.code || b.title, 'es', {numeric:true})); }
+/* Enlaces que sí se pueden mostrar dentro de la app (Drive, Docs, YouTube, PDF). */
+function embedUrl(u){
+  try {
+    const x = new URL(u, location.href);
+    if (/(^|\.)drive\.google\.com$/.test(x.hostname)){
+      const f = x.pathname.match(/\/file\/d\/([^/]+)/); const id = f ? f[1] : x.searchParams.get('id');
+      const folder = x.pathname.match(/\/folders\/([^/?]+)/);
+      if (folder) return `https://drive.google.com/embeddedfolderview?id=${folder[1]}#list`;
+      if (id) return `https://drive.google.com/file/d/${id}/preview`;
+    }
+    if (x.hostname === 'docs.google.com'){ const m = x.pathname.match(/^\/(document|presentation|spreadsheets)\/d\/([^/]+)/); if (m) return `https://docs.google.com/${m[1]}/d/${m[2]}/preview`; }
+    if (/(^|\.)youtube\.com$/.test(x.hostname) && x.searchParams.get('v')) return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(x.searchParams.get('v'))}`;
+    if (x.hostname === 'youtu.be') return `https://www.youtube-nocookie.com/embed${x.pathname}`;
+    if (x.origin === location.origin || /\.pdf$/i.test(x.pathname)) return x.href;
+  } catch {}
+  return null;
+}
+const isWebcUrl = u => /webc\.uai\.cl|\/mod\/|\/pluginfile\.php/.test(u || '') || !!(D.sync && D.sync.webc && u && u.startsWith(D.sync.webc.origin));
+function viewer(url, title){
+  if (!url) return null;
+  const e = embedUrl(url);
+  if (e) return h('div', {class:'viewer'},
+    h('iframe', {src:e, title:title || 'Material', loading:'lazy', allow:'fullscreen; encrypted-media', allowfullscreen:true}),
+    h('div', {class:'viewer-foot tiny muted'}, '¿No carga? ', h('a', {href:url, target:'_blank', rel:'noopener'}, 'Ábrelo aparte ↗')));
+  return h('div', {class:'viewer-out'},
+    h('p', {class:'tiny muted', style:'margin:0 0 8px'}, isWebcUrl(url)
+      ? 'Este material está en WebC. Moodle pide tu sesión y, por defecto, no deja que otras páginas lo muestren dentro, así que se abre en una pestaña aparte.'
+      : 'Este sitio no permite mostrarse dentro de otras apps, así que se abre en una pestaña aparte.'),
+    extLink(url, 'Abrir material', 'btn small'));
+}
+function openViewer(url, title){
+  $('#drawer').classList.add('wide');
+  openDrawer(h('div', {class:'drawer-head'}, h('div', {style:'flex:1;min-width:0'}, h('h3', null, title || 'Material')), h('button', {class:'iconbtn', type:'button', 'aria-label':'Cerrar', onclick:closeDrawer}, '✕')),
+    h('div', {class:'drawer-body'}, viewer(url, title)));
+}
+/* Tarjeta compacta de la clase (panel lateral del mapa). */
+function lessonCard(t){
+  const has = hasLesson(t);
+  return h('div', {class:'lesson-card'},
+    h('div', {class:'lc-info'}, h('b', null, has ? '▤ Clase lista para leer' : t.url ? '◫ Material del curso' : '▤ Clase sin escribir'),
+      h('small', {class:'muted'}, has ? `${readMin(t)} min de lectura · dentro de Calculai` : t.url ? (embedUrl(t.url) ? 'Se ve dentro de Calculai' : 'Se abre aparte') : 'Puedes escribirla o pegar una clase preparada')),
+    h('div', {class:'ai-row'},
+      h('button', {class:'btn small hlbtn', type:'button', onclick:() => openLesson(t.id)}, has || t.url ? 'Abrir clase' : 'Ir a la clase'),
+      h('button', {class:'btn small ai-btn', type:'button', onclick:() => openAIPanel(t)}, '✦ Adaptar con IA')));
+}
+function vClases(v){
+  const t = lessonOpen && topic(lessonOpen);
+  if (t){ vLesson(v, t); return; }
+  lessonOpen = null;
+  v.append(h('div', {class:'sec-title'}, h('h2', null, 'Clases'), h('span', {class:'hand'}, 'todo se lee aquí mismo')));
+  const last = P.lastLesson && topic(P.lastLesson);
+  const top = ranked()[0];
+  const quick = h('div', {class:'cl-quick'},
+    last ? h('button', {class:'card cl-cont', type:'button', style:scs(last.subj), onclick:() => openLesson(last.id)}, h('small', {class:'kicker'}, 'Continuar donde quedaste'), h('b', null, last.title), h('span', {class:'tiny muted'}, S(last.subj).name)) : null,
+    top && (!last || top.t.id !== last.id) ? h('button', {class:'card cl-cont', type:'button', style:scs(top.t.subj), onclick:() => openLesson(top.t.id)}, h('small', {class:'kicker'}, 'Sugerida para ahora'), h('b', null, top.t.title), h('span', {class:'tiny muted'}, top.why[0])) : null);
+  if (quick.children.length) v.append(quick);
+  const search = h('input', {type:'search', class:'cl-search', placeholder:'Buscar una clase (título, código o texto)…', 'aria-label':'Buscar clase'});
+  v.append(h('div', {class:'filterrow', style:'margin-top:12px'},
+    h('button', {class:'seg', type:'button', 'aria-pressed':String(classSubj === 'todas'), onclick:() => { classSubj = 'todas'; render(); }}, 'Todas'),
+    D.subjects.map(s => h('button', {class:'seg', type:'button', style:scs(s.id), 'aria-pressed':String(classSubj === s.id), onclick:() => { classSubj = s.id; render(); }}, s.short))), search);
+  const groups = [];
+  D.subjects.filter(s => classSubj === 'todas' || classSubj === s.id).forEach(s => {
+    const ts = lessonOrder(s.id);
+    const nw = ts.filter(hasLesson).length;
+    const grid = h('div', {class:'cl-grid'}, ts.map(x => {
+      const stt = st(x.id), ex = examFor(x);
+      const card = h('button', {class:'cl-card', type:'button', style:scs(s.id), onclick:() => openLesson(x.id), 'data-q':norm([x.code, x.title, x.content].join(' '))},
+        h('span', {class:'cl-top'}, x.code ? h('span', {class:'chip mono'}, x.code) : null, h('span', {class:'cl-kind ' + (hasLesson(x) ? 'ok' : x.url ? 'mat' : 'none')}, hasLesson(x) ? `▤ ${readMin(x)} min` : x.url ? '◫ material' : 'sin clase')),
+        h('b', {class:'cl-title'}, x.title),
+        h('span', {class:'cl-foot tiny'}, h('i', {class:'dot', style:`background:var(--s-${stt})`}), SL[stt], ex ? ` · ${ex.name} ${countdown(diffDays(TODAY, parse(ex.date)))}` : ''));
+      return card;
+    }));
+    const sec = h('section', {class:'cl-sec'}, h('div', {class:'cl-sh'}, h('h3', {class:'display'}, s.name), h('span', {class:'tiny muted'}, `${nw} de ${ts.length} clases escritas`),
+      h('button', {class:'btn ghost small', type:'button', onclick:() => openTopicForm(null, s.id)}, '+ Clase')),
+      ts.length ? grid : h('p', {class:'tiny muted'}, 'Esta materia todavía no tiene temas. Agrega uno con «+ Clase».'));
+    groups.push(sec); v.append(sec);
+  });
+  const none = h('p', {class:'tiny muted', hidden:true}, 'Ninguna clase coincide con la búsqueda.'); v.append(none);
+  search.addEventListener('input', () => {
+    const q = norm(search.value.trim()); let any = false;
+    v.querySelectorAll('.cl-card').forEach(c => { const ok = !q || c.dataset.q.includes(q); c.hidden = !ok; any = any || ok; });
+    groups.forEach(g => { g.hidden = !!q && !g.querySelector('.cl-card:not([hidden])'); });
+    none.hidden = any;
+  });
+}
+function vLesson(v, t){
+  const list = lessonOrder(t.subj), i = list.findIndex(x => x.id === t.id), prev = list[i - 1], next = list[i + 1];
+  const s = st(t.id), ex = examFor(t), nItems = D.items.filter(x => x.topic === t.id).length;
+  const page = h('div', {class:'lesson-page', style:scs(t.subj)});
+  page.append(...[
+    h('div', {class:'lp-top'},
+      h('button', {class:'btn ghost small', type:'button', onclick:() => { lessonOpen = null; render(); window.scrollTo({top:0}); }}, '← Todas las clases'),
+      subjChip(t.subj), t.code ? h('span', {class:'chip mono'}, t.code) : null, scopeTag(t.scope),
+      h('span', {class:'chip'}, h('i', {class:'dot', style:`background:var(--s-${s})`}), SL[s])),
+    h('h1', {class:'lp-title'}, t.title),
+    ex ? h('p', {class:'tiny muted', style:'margin:-4px 0 10px'}, `Entra en ${S(ex.subj).short} · ${ex.name}, ${countdown(diffDays(TODAY, parse(ex.date)))} (${fmtD(parse(ex.date))}).`) : null,
+    h('div', {class:'lp-actions'},
+      h('button', {class:'btn small ai-btn', type:'button', onclick:() => openAIPanel(t, page)}, '✦ Adaptar con IA'),
+      h('button', {class:'btn ghost small', type:'button', onclick:() => openTopicForm(t.id)}, hasLesson(t) ? '✎ Editar clase' : '✎ Escribir clase'),
+      nItems ? h('button', {class:'btn ghost small', type:'button', onclick:() => { pracFilter = t.id; Q = null; go('practica'); }}, `Practicar (${nItems})`) : null,
+      h('button', {class:'btn ghost small', type:'button', onclick:() => startFocus(t, buildSession(t))}, '▶ Sesión de estudio')),
+    h('div', {class:'ai-slot'})].filter(Boolean));
+  const body = h('article', {class:'card lp-body'});
+  if (hasLesson(t)) body.append(renderContent(t.content));
+  else body.append(h('div', {class:'lp-empty'},
+    h('p', {style:'margin:0 0 6px'}, h('b', null, 'Esta clase todavía no tiene texto en Calculai.')),
+    h('p', {class:'tiny muted', style:'margin:0 0 10px'}, t.url ? 'Abajo tienes el material del curso. Puedes escribir la clase o pegar una ya preparada con «Escribir clase».' : 'Escríbela o pega una clase preparada con «Escribir clase». Usa # para títulos y $…$ para fórmulas.'),
+    h('button', {class:'btn small', type:'button', onclick:() => openTopicForm(t.id)}, '✎ Escribir clase')));
+  page.append(body);
+  if (t.url) page.append(hasLesson(t)
+    ? h('details', {class:'card lp-mat'}, h('summary', null, '◫ Material del curso'), viewer(t.url, t.title))
+    : h('section', {class:'card lp-mat'}, h('h4', {style:'margin:0 0 8px'}, '◫ Material del curso'), viewer(t.url, t.title)));
+  page.append(
+    h('section', {class:'card lp-check'}, h('h4', {style:'margin:0 0 8px'}, '¿Cómo quedó este tema?'),
+      h('div', {class:'statusbar'}, STATUSES.map(x => h('button', {class:'stbtn', type:'button', style:`--stc:var(--s-${x.k})`, 'aria-pressed':String(s === x.k), onclick:() => { setStatus(t.id, x.k); toast(`${t.title}: ${x.l}`); render(); }}, h('i', {class:'dot', style:`background:var(--s-${x.k})`}), x.l)))),
+    h('nav', {class:'lp-nav', 'aria-label':'Otras clases'},
+      prev ? h('button', {class:'btn ghost', type:'button', onclick:() => { openLesson(prev.id); }}, '← ' + prev.title) : h('span'),
+      next ? h('button', {class:'btn', type:'button', onclick:() => { openLesson(next.id); }}, next.title + ' →') : h('span')));
+  v.append(page);
+}
+
+/* ---------- IA: adaptar una clase a lo que te cuesta ---------- */
+const AI_MODES = [
+  {k:'simple', l:'Explícame más simple', prompt:'Reescribe esta clase de forma más simple e intuitiva, como para alguien que ve el tema por primera vez. Mantén las fórmulas, pero explica la idea antes de cada una.'},
+  {k:'examples', l:'Dame más ejemplos', prompt:'Agrega 3 ejemplos resueltos adicionales, de dificultad creciente, con el procedimiento paso a paso.'},
+  {k:'summary', l:'Hazme un resumen', prompt:'Haz un resumen de los puntos clave de esta clase: fórmulas importantes, qué significa cada símbolo y cuándo se usa cada una.'},
+  {k:'rephrase', l:'Explícalo de otra forma', prompt:'Explica el mismo contenido con otras palabras y otro enfoque, con analogías cuando ayuden. No agregues contenido nuevo.'},
+  {k:'errors', l:'Errores frecuentes', prompt:'Lista los errores más frecuentes en estos temas. Para cada uno: por qué ocurre, cómo detectarlo y cómo evitarlo.'},
+  {k:'practice', l:'Ejercicios para practicar', prompt:'Crea 4 ejercicios de práctica de dificultad creciente sobre esta clase. Pon todas las soluciones al final, en una sección «Soluciones».'}
+];
+const AI_DEFAULT_MODEL = {anthropic:'claude-haiku-5-5', openai:'gpt-4o-mini'};
+const lsGet = (k, d = '') => { try { return localStorage.getItem(k) ?? d; } catch { return d; } };
+const lsSet = (k, v) => { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch {} };
+const getAIKey = () => lsGet('calculai-ai-key');
+const setAIKey = k => lsSet('calculai-ai-key', k);
+const getAIProvider = () => lsGet('calculai-ai-provider', 'anthropic');
+const setAIProvider = p => lsSet('calculai-ai-provider', p);
+const getAIModel = () => lsGet('calculai-ai-model') || AI_DEFAULT_MODEL[getAIProvider()] || '';
+const setAIModel = m => lsSet('calculai-ai-model', m);
+
+function aiPrompt(mode, t, need){
+  const base = mode ? mode.prompt : 'Adapta esta clase según lo que pide el estudiante.';
+  return `${base}${need ? `\n\nLo que me cuesta o necesito: ${need}` : ''}\n\nReglas: responde en español; usa solo el contenido de la clase (si agregas algo que no está en ella, márcalo como «Complemento»); usa $…$ para fórmulas en línea y $$…$$ en bloques; usa # y ## para títulos.\n\n---\nClase «${t.title}»:\n\n${t.content || '(La clase no tiene texto escrito en Calculai.' + (t.url ? ' Material: ' + t.url : '') + ')'}`;
+}
+async function callAI(prompt){
+  const key = getAIKey(), provider = getAIProvider(), model = getAIModel();
+  if (!key) throw new Error('NO_KEY');
+  const sys = 'Eres un ayudante universitario. Respondes en español, con claridad y sin inventar contenido.';
+  let r;
+  if (provider === 'anthropic'){
+    r = await fetch('https://api.anthropic.com/v1/messages', {method:'POST', headers:{'Content-Type':'application/json', 'x-api-key':key, 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true'}, body:JSON.stringify({model, max_tokens:4096, system:sys, messages:[{role:'user', content:prompt}]})});
+  } else {
+    r = await fetch('https://api.openai.com/v1/chat/completions', {method:'POST', headers:{'Content-Type':'application/json', 'Authorization':`Bearer ${key}`}, body:JSON.stringify({model, messages:[{role:'system', content:sys}, {role:'user', content:prompt}]})});
+  }
+  if (!r.ok){ const e = await r.text().catch(() => ''); throw new Error(r.status === 401 ? 'la API key no es válida' : r.status === 404 ? `el modelo «${model}» no existe para esa cuenta` : `error ${r.status} ${e.slice(0, 120)}`); }
+  const j = await r.json();
+  return provider === 'anthropic' ? (j.content || []).map(c => c.text || '').join('') : j.choices[0].message.content;
+}
+
+function openAIPanel(t, host){
+  host = host || document.querySelector('.drawer-body');
+  if (!host) return;
+  const wrap = h('section', {class:'ai-panel', 'aria-label':'Adaptar clase con IA'});
+  const resultArea = h('div', {class:'ai-result'});
+  const statusEl = h('div', {class:'ai-status tiny muted', role:'status'});
+  const need = h('textarea', {class:'ai-need', rows:2, placeholder:'Ej.: no entiendo cuándo usar cada fórmula · me pierdo con los signos · necesito algo rápido antes de la prueba'});
+
+  const provSel = h('select', {class:'ai-prov-sel', 'aria-label':'Proveedor'},
+    h('option', {value:'anthropic', selected:getAIProvider() === 'anthropic' || null}, 'Anthropic (Claude)'),
+    h('option', {value:'openai', selected:getAIProvider() === 'openai' || null}, 'OpenAI'));
+  const keyIn = h('input', {type:'password', class:'ai-key-in', value:getAIKey(), placeholder:'Pega tu API key', 'aria-label':'API key', autocomplete:'off'});
+  const modelIn = h('input', {type:'text', class:'ai-key-in', value:getAIModel(), 'aria-label':'Modelo', style:'max-width:180px'});
+  provSel.addEventListener('change', () => { setAIProvider(provSel.value); setAIModel(''); modelIn.value = getAIModel(); });
+  const configEl = h('details', {class:'ai-config', open:!getAIKey() || null},
+    h('summary', null, getAIKey() ? '⚙ Configuración de IA (conectada)' : '⚙ Conectar una IA (opcional)'),
+    h('div', {class:'ai-config-body'},
+      h('p', {class:'tiny muted', style:'margin:0 0 8px'}, 'Usa tu propia API key. Se guarda solo en este navegador y la clase se envía directo al proveedor que elijas, sin pasar por otros servidores. El proveedor cobra según su tarifa vigente: revisa su página de precios.'),
+      h('div', {class:'ai-row'}, provSel, keyIn, modelIn,
+        h('button', {class:'btn ghost small', type:'button', onclick:() => { setAIKey(keyIn.value.trim()); setAIModel(modelIn.value.trim()); toast(keyIn.value.trim() ? 'IA conectada' : 'API key eliminada'); openAIPanel(t, host); }}, 'Guardar')),
+      h('p', {class:'tiny muted', style:'margin:8px 0 0'}, 'Sin API key igual funciona: cada botón copia una instrucción lista para pegar en el asistente de IA que ya uses.')));
+
+  const run = async mode => {
+    const prompt = aiPrompt(mode, t, need.value.trim());
+    if (!getAIKey()){
+      try { await navigator.clipboard.writeText(prompt); toast('Instrucción copiada: pégala en tu asistente de IA'); statusEl.textContent = 'Instrucción copiada. Si después quieres guardar la respuesta aquí, pégala en «Editar clase».'; }
+      catch { resultArea.replaceChildren(h('p', {class:'tiny muted'}, 'Copia esta instrucción:'), h('textarea', {class:'ai-need', rows:6, readonly:true, onclick:e => e.target.select()}, prompt)); }
+      return;
+    }
+    statusEl.textContent = 'Generando… (puede tardar unos segundos)'; resultArea.replaceChildren();
+    wrap.querySelectorAll('.ai-modes .btn').forEach(b => b.disabled = true);
+    try {
+      const text = await callAI(prompt);
+      statusEl.textContent = 'Revisa la respuesta: la IA puede equivocarse. Compárala con tu material antes de reemplazar la clase.';
+      resultArea.replaceChildren(renderContent(text),
+        h('div', {class:'ai-row', style:'margin-top:12px'},
+          h('button', {class:'btn small', type:'button', onclick:() => { if (t.content && !t.contentOrig) t.contentOrig = t.content; t.content = text; save(); toast('Clase actualizada (la original quedó guardada)'); refreshLesson(t.id); }}, t.content ? 'Usar como mi clase' : 'Guardar como clase'),
+          t.content ? h('button', {class:'btn ghost small', type:'button', onclick:() => { t.content = t.content.trim() + '\n\n## Agregado con IA\n\n' + text; save(); toast('Agregado al final de la clase'); refreshLesson(t.id); }}, 'Agregar al final') : null,
+          h('button', {class:'btn ghost small', type:'button', onclick:async () => { try { await navigator.clipboard.writeText(text); toast('Copiado'); } catch { toast('No se pudo copiar'); } }}, 'Copiar'),
+          h('button', {class:'btn ghost small', type:'button', onclick:() => { resultArea.replaceChildren(); statusEl.textContent = ''; }}, 'Descartar')));
+    } catch (err) {
+      statusEl.textContent = err.message === 'NO_KEY' ? 'Falta la API key.' : `No se pudo generar: ${err.message}.`;
+    } finally { wrap.querySelectorAll('.ai-modes .btn').forEach(b => b.disabled = false); }
+  };
+
+  wrap.append(...[
+    h('div', {class:'ai-head'}, h('h4', null, '✦ Adapta esta clase'), h('button', {class:'iconbtn', type:'button', 'aria-label':'Cerrar panel de IA', onclick:() => wrap.remove()}, '✕')),
+    h('label', {class:'tiny', style:'font-weight:700;display:block;margin-bottom:4px'}, '¿Qué te cuesta o qué necesitas? (opcional)'), need,
+    h('div', {class:'ai-modes'}, AI_MODES.map(m => h('button', {class:'btn ghost small', type:'button', onclick:() => run(m)}, m.l)),
+      h('button', {class:'btn ghost small', type:'button', onclick:() => need.value.trim() ? run(null) : (need.focus(), toast('Escribe primero qué necesitas'))}, 'Solo lo que escribí')),
+    t.contentOrig ? h('p', {class:'tiny', style:'margin:4px 0 0'}, h('button', {class:'linkbtn', type:'button', onclick:() => { t.content = t.contentOrig; delete t.contentOrig; save(); toast('Clase original restaurada'); refreshLesson(t.id); }}, '↺ Restaurar la clase original')) : null,
+    configEl, statusEl, resultArea].filter(Boolean));
+
+  const existing = host.querySelector('.ai-panel');
+  if (existing) existing.replaceWith(wrap);
+  else { const slot = host.querySelector('.ai-slot'); if (slot) slot.replaceChildren(wrap); else host.insertBefore(wrap, host.querySelector(':scope > h4')); }
+  wrap.scrollIntoView({block:'nearest', behavior:'smooth'});
+}
+/* Vuelve a dibujar la clase donde esté abierta (lector o panel lateral). */
+function refreshLesson(id){ if (tab === 'clases' && lessonOpen === id) render(); else if ($('#drawer').classList.contains('open')) openTopic(id); }
+
 function openTopic(id){
   const t = topic(id); if (!t) return;
   const s = st(id), ev = evidence(id), nr = nextReview(id);
@@ -345,7 +630,8 @@ function openTopic(id){
       h('div', {style:'flex:1;min-width:0'}, h('div', {style:'display:flex;gap:6px;flex-wrap:wrap'}, subjChip(t.subj), t.code ? h('span', {class:'chip mono'}, t.code) : null, scopeTag(t.scope)), h('h3', null, t.title)),
       h('button', {class:'iconbtn', type:'button', 'aria-label':'Cerrar', onclick:closeDrawer}, '✕')),
     h('div', {class:'drawer-body'},
-      t.url ? h('div', {class:'linkrow'}, extLink(t.url, 'Abrir material', 'btn small')) : h('p', {class:'tiny muted'}, 'Sin enlace de material. Puedes agregarlo editando el tema.'),
+      lessonCard(t),
+      h('div', {class:'ai-slot'}),
       h('h4', null, 'Tu autoevaluación'),
       h('div', {class:'statusbar'}, STATUSES.map(x => h('button', {class:'stbtn', type:'button', style:`--stc:var(--s-${x.k})`, 'aria-pressed':String(s === x.k), onclick:() => { setStatus(id, x.k); toast(`${t.title}: ${x.l}`); render(); openTopic(id); }}, h('i', {class:'dot', style:`background:var(--s-${x.k})`}), x.l))),
       h('p', {class:'tiny muted'}, P.status[id] ? `Marcado el ${fmtD(parse(P.status[id].at))}.` + (nr ? ` Próximo repaso: ${fmtD(nr)}.` : '') : 'Aún no lo marcas.'),
@@ -417,7 +703,7 @@ function vPractica(v){
       !(Q.ok && Q.conf !== 'adivino') ? h('div', {class:'tiny', style:'margin-top:6px'}, 'Quedó en tu banco de errores.') : null));
     card.append(h('div', {style:'margin-top:14px;display:flex;gap:8px;flex-wrap:wrap'},
       h('button', {class:'btn', type:'button', onclick:() => { newQ(pickItem(pracFilter, it.id)); render(); }}, 'Siguiente →'),
-      extLink(t.url, 'Ver material'),
+      h('button', {class:'btn ghost small', type:'button', onclick:() => openLesson(t.id)}, 'Ver clase'),
       h('button', {class:'btn ghost small', type:'button', onclick:() => openItemForm(it.id)}, 'Editar ejercicio')));
   }
   grid.append(card);
@@ -540,6 +826,7 @@ function vMonth(v){
     g.append(h('button', {class:`mday ${out ? 'out' : ''} ${past ? 'past' : ''} ${k === iso(TODAY) ? 'today' : ''} ${selDay === k ? 'sel' : ''}`, type:'button',
         'aria-label':`${fmtD(d)}${evs.length ? ', ' + evs.length + ' evento(s)' : ''}`, onclick:() => { selDay = k; render(); }},
       h('span', {class:'mnum'}, d.getDate()),
+      P.dayLoad[k] && P.dayLoad[k].hours ? h('span', {class:'dl-badge', title:`${P.dayLoad[k].hours}h planificadas`}, `${P.dayLoad[k].hours}h`) : null,
       P.days[k] ? h('span', {class:'tick', 'aria-label':'hecho'}, '✓') : null,
       h('span', {class:'mevs'}, evs.map(e => h('span', {class:`mev k-${e.kind} ${e.ver ? '' : 'unver'}`, style:scs(e.subj), title:`${S(e.subj).short} · ${e.name} · ${evWhen(e)}`},
         h('span', {class:'mev-t'}, `${(KIND[e.kind] || KIND.otro).i} ${e.time ? e.time.slice(0, 5) + ' ' : ''}${S(e.subj).short} ${e.name}`)))),
@@ -548,6 +835,49 @@ function vMonth(v){
   v.append(h('div', {class:'card', style:'padding:10px;margin-top:10px'}, g));
   dayDetail(v);
 }
+function dayLoadFor(k){ return P.dayLoad[k] || {hours:0, blocks:[]}; }
+function saveDayLoad(k, dl){ if (!dl.hours && !dl.blocks.length) delete P.dayLoad[k]; else P.dayLoad[k] = dl; save(); }
+function dayLoadEditor(k){
+  const dl = dayLoadFor(k);
+  const wrap = h('div', {class:'dayload-ed'});
+  const hrIn = h('input', {type:'number', class:'dl-hrs', min:0, max:16, step:0.5, value:dl.hours || '', placeholder:'0',
+    'aria-label':'Horas disponibles', onchange:() => { dl.hours = Math.max(0, Math.min(16, parseFloat(hrIn.value) || 0)); saveDayLoad(k, dl); render(); }});
+  wrap.append(h('div', {class:'dl-top'}, h('label', {class:'dl-lbl'}, 'Horas disponibles'), hrIn));
+  if (dl.hours > 0){
+    const total = dl.blocks.reduce((s, b) => s + (b.hours || 0), 0);
+    const free = Math.max(0, dl.hours - total);
+    const bWrap = h('div', {class:'dl-blocks'});
+    dl.blocks.forEach((b, i) => {
+      const sub = S(b.subj);
+      bWrap.append(h('div', {class:'dl-block', style:scs(b.subj)},
+        h('span', {class:'dl-subj'}, sub.short),
+        h('input', {type:'number', class:'dl-bhrs', min:0, max:dl.hours, step:0.5, value:b.hours || '',
+          'aria-label':`Horas ${sub.short}`,
+          onchange:ev => { b.hours = Math.max(0, parseFloat(ev.target.value) || 0); saveDayLoad(k, dl); render(); }}),
+        h('span', {class:'tiny muted'}, 'h'),
+        h('button', {class:'iconbtn dl-rm', type:'button', title:'Quitar', onclick:() => { dl.blocks.splice(i, 1); saveDayLoad(k, dl); render(); }}, '×')));
+    });
+    // bar visual
+    if (dl.blocks.length){
+      const barEl = h('div', {class:'dl-bar'});
+      dl.blocks.forEach(b => { if (b.hours > 0) barEl.append(h('span', {class:'dl-seg', style:`width:${(b.hours / dl.hours * 100).toFixed(1)}%;background:var(--c-${S(b.subj).color})`, title:`${S(b.subj).short}: ${b.hours}h`})); });
+      if (free > 0) barEl.append(h('span', {class:'dl-seg dl-free', style:`width:${(free / dl.hours * 100).toFixed(1)}%`, title:`Libre: ${free}h`}));
+      bWrap.append(barEl);
+      bWrap.append(h('div', {class:'dl-summary tiny muted'}, `${total}h asignadas · ${free}h libres`));
+    }
+    wrap.append(bWrap);
+    // add subject button
+    const used = new Set(dl.blocks.map(b => b.subj));
+    const avail = D.subjects.filter(s => !used.has(s.id));
+    if (avail.length) wrap.append(h('div', {class:'dl-add'},
+      h('select', {class:'dl-sel', 'aria-label':'Agregar materia', onchange:ev => {
+        if (!ev.target.value) return;
+        dl.blocks.push({subj:ev.target.value, hours:1});
+        saveDayLoad(k, dl); render();
+      }}, h('option', {value:''}, '+ Agregar materia…'), avail.map(s => h('option', {value:s.id}, s.short)))));
+  }
+  return wrap;
+}
 function dayDetail(v){
   const sd = parse(selDay), evs = eventsOn(selDay), sug = daySuggest(sd), lastEval = lastEvalDate();
   v.append(h('section', {class:'card daydetail'},
@@ -555,6 +885,7 @@ function dayDetail(v){
     evs.length ? h('div', {class:'evlist'}, evs.map(e => eventRow(e))) : h('p', {class:'muted tiny', style:'margin:0 0 8px'}, 'Sin evaluaciones ni entregas este día.'),
     sd >= TODAY && sd <= lastEval && sug.tips.length ? h('div', null, h('b', {class:'tiny', style:'text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3)'}, 'Foco de estudio sugerido'),
       h('ul', {style:'margin:4px 0 12px;padding-left:18px'}, sug.tips.map(x => h('li', null, x)))) : null,
+    sd >= TODAY ? dayLoadEditor(selDay) : null,
     h('div', {style:'display:flex;gap:12px;flex-wrap:wrap;align-items:center'},
       sd >= TODAY ? h('label', {class:'chk'}, h('input', {type:'checkbox', checked:P.days[selDay] || null, onchange:e => { if (e.target.checked) P.days[selDay] = true; else delete P.days[selDay]; save(); render(); }}), 'Cumplí el plan de este día') : null,
       h('button', {class:'btn ghost small', type:'button', onclick:() => openEventForm(null, selDay)}, '+ Evento este día'))));
@@ -634,18 +965,18 @@ const LIBRARY = [
 function vBiblio(v){
   const news = (D.news || []).slice().sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   if (news.length){
-    v.append(h('div', {class:'sec-title'}, h('h2', null, 'Avisos de WebC'), h('span', {class:'hand'}, D.sync && D.sync.webc ? 'leídos el ' + fmtD(parse(D.sync.webc.at.slice(0, 10))) : '')));
-    v.append(h('div', {class:'newslist'}, news.slice(0, 30).map(n => h('details', {class:'news', style:scs(n.subj)}, h('summary', null, subjChip(n.subj), h('b', null, n.title), h('small', {class:'muted'}, [n.author, n.date ? fmtD(parse(n.date)) : ''].filter(Boolean).join(' · '))),
-      h('div', {class:'newsbody'}, n.text), n.url ? h('a', {class:'tiny', href:n.url, target:'_blank', rel:'noopener'}, 'Ver en WebC ↗') : null))));
+    v.append(h('div', {class:'sec-title'}, h('h2', null, 'Avisos y correos'), h('span', {class:'hand'}, D.sync && D.sync.webc ? 'WebC revisado ' + agoMin(D.sync.webc.at) : '')));
+    v.append(h('div', {class:'newslist'}, news.slice(0, 40).map(n => h('details', {class:'news', style:n.subj ? scs(n.subj) : '', ontoggle:e => { if (e.target.open && n.fresh){ delete n.fresh; save(); } }}, h('summary', null, n.subj ? subjChip(n.subj) : h('span', {class:'chip'}, 'Sin materia'), h('span', {class:'chip ib-src'}, n.src === 'outlook' ? '✉ Outlook' : '⟳ WebC'), n.fresh ? h('span', {class:'chip new-chip'}, 'nuevo') : null, h('b', null, n.title), h('small', {class:'muted'}, [n.author, n.date ? fmtD(parse(n.date)) : ''].filter(Boolean).join(' · '))),
+      h('div', {class:'newsbody'}, n.text), n.url ? h('a', {class:'tiny', href:n.url, target:'_blank', rel:'noopener'}, n.src === 'outlook' ? 'Abrir en Outlook ↗' : 'Ver en WebC ↗') : null))));
   }
   v.append(h('div', {class:'sec-title'}, h('h2', null, 'Tu material'), h('span', {class:'hand'}, 'lo del curso manda')));
   D.subjects.forEach(s => {
-    const ts = topicsOf(s.id).filter(t => t.url), rs = D.resources.filter(r => r.subj === s.id);
+    const ts = topicsOf(s.id).filter(t => t.url || hasLesson(t)), rs = D.resources.filter(r => r.subj === s.id);
     v.append(h('h3', {class:'display', style:'margin:18px 0 0;font-size:1rem;color:var(--ink-2)'}, s.name));
     if (!ts.length && !rs.length){ v.append(h('p', {class:'tiny muted'}, 'Sin enlaces todavía. Agrega el enlace del material en cada tema, o recursos en Editar.')); return; }
     v.append(h('div', {class:'mine'},
-      ts.sort((a, b) => (a.code || a.title).localeCompare(b.code || b.title)).map(t => h('a', {class:'res', style:scs(s.id), href:t.url, target:'_blank', rel:'noopener'}, h('i', {class:'dot', style:`background:var(--s-${st(t.id)})`}), h('span', null, h('b', null, (t.code ? t.code + ' · ' : '') + t.title), h('small', null, SCOPE_LBL[t.scope] || 'Tema')))),
-      rs.map(r => h('a', {class:'res', style:scs(s.id), href:r.url || '#', target:'_blank', rel:'noopener'}, h('span', {style:'font-size:1.1rem'}, '◆'), h('span', null, h('b', null, r.title), h('small', null, r.kind || 'Recurso'))))));
+      ts.sort((a, b) => (a.code || a.title).localeCompare(b.code || b.title)).map(t => h('button', {class:'res', type:'button', style:scs(s.id), onclick:() => openLesson(t.id)}, h('i', {class:'dot', style:`background:var(--s-${st(t.id)})`}), h('span', null, h('b', null, (t.code ? t.code + ' · ' : '') + t.title), h('small', null, SCOPE_LBL[t.scope] || 'Tema')))),
+      rs.map(r => h('button', {class:'res', type:'button', style:scs(s.id), onclick:() => r.url && embedUrl(r.url) ? openViewer(r.url, r.title) : r.url ? window.open(r.url, '_blank', 'noopener') : null}, h('span', {style:'font-size:1.1rem'}, '◆'), h('span', null, h('b', null, r.title), h('small', null, (r.kind || 'Recurso') + (r.url && !embedUrl(r.url) ? ' · se abre aparte ↗' : '')))))));
   });
   v.append(h('div', {class:'sec-title'}, h('h2', null, 'Libros abiertos para complementar'), h('span', {class:'hand'}, 'gratis y con licencia abierta')));
   v.append(h('p', {class:'muted tiny'}, 'Licencias revisadas en octubre de 2026. «IA» indica si la fuente oficial pone restricciones a usarlos con inteligencia artificial.'));
@@ -725,7 +1056,7 @@ function openEventForm(id, date){
       D.topics.forEach(t => { if (t.exam === n.id && !n.topics.includes(t.id)) delete t.exam; });
       n.topics.forEach(tid => { const t = topic(tid); if (t) t.exam = n.id; });
       save(); toast('Evento guardado'); },
-    e ? () => { D.events = D.events.filter(x => x.id !== e.id); D.topics.forEach(t => { if (t.exam === e.id) delete t.exam; }); save(); } : null);
+    e ? () => { if (e.webc) syncData().dismissed.push(e.webc); D.events = D.events.filter(x => x.id !== e.id); D.topics.forEach(t => { if (t.exam === e.id) delete t.exam; }); save(); } : null);
 }
 function openTopicForm(id, subj){
   const t = id ? topic(id) : null;
@@ -735,11 +1066,12 @@ function openTopicForm(id, subj){
     {k:'title', label:'Título', required:true, ph:'Fracciones parciales'},
     {k:'code', label:'Código corto', ph:'C06', help:'Opcional: número de clase o unidad.'},
     {k:'url', label:'Enlace al material', type:'url', ph:'https://…', help:'Tu apunte, una clase, un video, un libro abierto…'},
+    {k:'content', label:'Contenido de la clase', type:'textarea', ph:'Escribe aquí la clase o pega contenido…\n\n# Encabezado\nTexto con $fórmulas$ en línea.\n$$E = mc^2$$', help:'Opcional: la clase se muestra dentro de la app. Usa # para títulos, $…$ para fórmulas, $$…$$ para fórmulas grandes.'},
     {k:'pre', label:'Prerrequisitos', type:'multi', options:v => topicsOf(v.subj).filter(x => x.id !== t?.id).map(x => [x.id, (x.code ? x.code + ' ' : '') + x.title]), empty:'Aún no hay otros temas en esta materia.'},
     {k:'scope', label:'Alcance', type:'select', options:[['actual','Material actual'],['noconf','Inclusión no confirmada'],['hist','Referencia histórica']]},
     {k:'prio', label:'Prioridad', type:'select', options:[['2','Normal'],['1','Alta'],['3','Baja']]}],
-    t ? {...t, pre:[...(t.pre || [])], prio:String(t.prio || 2)} : {subj:subj || mapSubj || D.subjects[0].id, scope:'actual', prio:'2'},
-    v => { const n = {id:t?.id || uid('t'), subj:v.subj, title:v.title.trim(), code:(v.code || '').trim(), url:(v.url || '').trim(), pre:(v.pre || []).filter(p => topic(p)?.subj === v.subj), scope:v.scope || 'actual', prio:Number(v.prio) || 2};
+    t ? {...t, content:t.content || '', pre:[...(t.pre || [])], prio:String(t.prio || 2)} : {subj:subj || mapSubj || D.subjects[0].id, scope:'actual', prio:'2'},
+    v => { const n = {id:t?.id || uid('t'), subj:v.subj, title:v.title.trim(), code:(v.code || '').trim(), url:(v.url || '').trim(), content:(v.content || '').trim(), pre:(v.pre || []).filter(p => topic(p)?.subj === v.subj), scope:v.scope || 'actual', prio:Number(v.prio) || 2};
       if (t){ if (t.exam) n.exam = t.exam; Object.assign(t, n); } else D.topics.push(n); save(); toast('Tema guardado'); },
     t ? () => { D.topics = D.topics.filter(x => x.id !== t.id); D.topics.forEach(x => x.pre = (x.pre || []).filter(p => p !== t.id)); D.items = D.items.filter(i => i.topic !== t.id); D.events.forEach(e => e.topics = (e.topics || []).filter(x => x !== t.id)); delete P.status[t.id]; save(); } : null);
 }
@@ -794,7 +1126,10 @@ function vEditar(v){
   sec('Ejercicios', '+ Ejercicio', () => openItemForm(null), D.items.map(i => { const t = topic(i.topic); return t ? row(scs(t.subj), String(i.q).replace(/\$[^$]*\$/g, '[fórmula]').slice(0, 90), `${S(t.subj).short} · ${t.title} · ${i.type === 'mc' ? 'alternativas' : 'numérica'}`, () => openItemForm(i.id)) : null; }).filter(Boolean), 'Sin ejercicios. Crea preguntas desde tus guías o pruebas anteriores.');
   sec('Recursos', '+ Recurso', () => openResourceForm(null), D.resources.map(r => row(scs(r.subj), r.title, `${S(r.subj).short}${r.kind ? ' · ' + r.kind : ''}`, () => openResourceForm(r.id))), 'Formularios, guías, simulacros, videos…');
 
+  v.append(h('div', {class:'sec-title', style:'margin-top:28px'}, h('h2', null, 'Conexiones'), h('span', {class:'hand'}, 'para que todo llegue solo')));
   v.append(webcCard());
+  v.append(h('section', {class:'edit-sec card'}, h('h3', {class:'display', style:'margin:0 0 4px;font-size:1.15rem'}, '⟳ Revisión automática al abrir'), autoSyncSteps()));
+  v.append(outlookCard());
   const file = h('input', {type:'file', accept:'.json,application/json', style:'display:none', onchange:e => importFile(e.target.files[0], false)});
   v.append(h('section', {class:'edit-sec card'},
     h('h3', {class:'display', style:'margin:0 0 6px;font-size:1.15rem'}, 'Respaldo y compartir'),
@@ -831,12 +1166,20 @@ let F = null, fTimer = null;
 function startFocus(t, steps){ F = {t, steps, idx:0, left:steps[0].min * 60, running:true, elapsed:0, end:false}; $('#focus').classList.add('on'); document.body.style.overflow = 'hidden'; clearInterval(fTimer); fTimer = setInterval(tick, 1000); renderFocus(); }
 function tick(){ if (!F || !F.running || F.end) return; F.left = Math.max(0, F.left - 1); F.elapsed++; if (F.left === 0){ F.running = false; try { navigator.vibrate && navigator.vibrate(200); } catch {} } renderFocus(); }
 function nextStep(){ if (F.idx < F.steps.length - 1){ F.idx++; F.left = F.steps[F.idx].min * 60; F.running = true; } else F.end = true; renderFocus(); }
-function endFocus(){ if (F && F.elapsed >= 60){ P.sessions.push({at:iso(TODAY), topic:F.t.id, min:Math.round(F.elapsed / 60)}); save(); } clearInterval(fTimer); F = null; $('#focus').classList.remove('on'); document.body.style.overflow = ''; render(); }
+function toggleFocusLesson(){
+  const box = $('#focusLesson'); if (!box || !F) return;
+  if (box.hidden){ const t = topic(F.t.id) || F.t; box.replaceChildren(h('div', {class:'focus-lesson-in card', style:scs(t.subj)}, h('div', {class:'ai-row', style:'justify-content:space-between'}, h('b', {class:'display'}, '▤ ' + t.title), h('button', {class:'btn ghost small', type:'button', onclick:toggleFocusLesson}, 'Ocultar clase')), hasLesson(t) ? renderContent(t.content) : h('p', {class:'tiny muted'}, 'Esta clase aún no tiene texto en Calculai.'), t.url ? viewer(t.url, t.title) : null)); box.hidden = false; box.scrollIntoView({behavior:'smooth', block:'start'}); }
+  else { box.hidden = true; box.replaceChildren(); }
+  renderFocus();
+}
+function endFocus(){ const fl = $('#focusLesson'); if (fl){ fl.hidden = true; fl.replaceChildren(); } if (F && F.elapsed >= 60){ P.sessions.push({at:iso(TODAY), topic:F.t.id, min:Math.round(F.elapsed / 60)}); save(); } clearInterval(fTimer); F = null; $('#focus').classList.remove('on'); document.body.style.overflow = ''; render(); }
 function renderFocus(){
   const el = $('#focus'); if (!F) return;
   const step = F.steps[F.idx], tot = step.min * 60, frac = F.left / tot, C = 2 * Math.PI * 100;
   document.title = F.end ? 'Calculai' : `${pad(Math.floor(F.left / 60))}:${pad(F.left % 60)} · ${step.t}`;
-  el.replaceChildren(h('div', {class:'focus-in', style:scs(F.t.subj)},
+  let host = el.querySelector('#focusMain');
+  if (!host){ host = h('div', {id:'focusMain'}); el.replaceChildren(host, h('div', {id:'focusLesson', class:'focus-lesson', hidden:true})); }
+  host.replaceChildren(h('div', {class:'focus-in', style:scs(F.t.subj)},
     h('div', {class:'focus-top'}, h('div', null, subjChip(F.t.subj), ' ', h('b', {class:'display', style:'font-size:1.15rem'}, F.t.title)), h('button', {class:'iconbtn', type:'button', onclick:() => { document.title = 'Calculai'; endFocus(); }, 'aria-label':'Salir del modo enfoque'}, 'Salir ✕')),
     F.end ? h('div', {class:'card endpanel'},
       h('h2', {class:'display', style:'margin:0 0 4px'}, 'Sesión terminada'),
@@ -850,7 +1193,7 @@ function renderFocus(){
         h('ol', {class:'fsteps'}, F.steps.map((s, i) => h('li', {class:i === F.idx ? 'cur' : i < F.idx ? 'done' : ''},
           h('span', {class:'fs-n'}, i < F.idx ? '✓' : i + 1),
           h('div', {style:'flex:1;min-width:0'}, h('div', {class:'fs-t'}, `${s.t} · ${s.min}'`), i === F.idx ? h('div', {class:'fs-d'}, s.d) : null),
-          i === F.idx && s.link ? extLink(s.link, s.linkLbl) : null)))),
+          i === F.idx && s.lesson ? h('button', {class:'btn ghost small', type:'button', onclick:toggleFocusLesson}, $('#focusLesson') && !$('#focusLesson').hidden ? 'Ocultar clase' : 'Ver clase') : null)))),
       h('div', {class:'focus-ctrl'},
         h('button', {class:'btn ghost', type:'button', onclick:() => { F.running = !F.running; renderFocus(); }}, F.running ? '❚❚ Pausa' : '▶ Reanudar'),
         h('button', {class:F.left === 0 ? 'btn hlbtn' : 'btn', type:'button', onclick:nextStep}, F.idx < F.steps.length - 1 ? 'Siguiente paso →' : 'Terminar sesión')))));
@@ -862,7 +1205,7 @@ function renderFocus(){
 let palItems = [], palSel = 0;
 function palData(){
   const out = D.subjects.length ? TABS.map(t => ({l:'Ir a ' + t.l, k:'Sección', run:() => go(t.k)})) : [];
-  D.topics.forEach(t => out.push({l:(t.code ? t.code + ' · ' : '') + t.title, k:S(t.subj).short, dot:`var(--s-${st(t.id)})`, run:() => { mapSubj = t.subj; go('mapa'); setTimeout(() => openTopic(t.id), 60); }}));
+  D.topics.forEach(t => out.push({l:(t.code ? t.code + ' · ' : '') + t.title, k:S(t.subj).short, dot:`var(--s-${st(t.id)})`, run:() => openLesson(t.id)}));
   D.resources.filter(r => r.url).forEach(r => out.push({l:r.title, k:S(r.subj).short + ' · abrir ↗', run:() => window.open(r.url, '_blank', 'noopener')}));
   D.subjects.forEach(s => out.push({l:'Practicar ' + s.short, k:'Acción', run:() => { pracFilter = s.id; Q = null; go('practica'); }}));
   out.push({l:'Nuevo evento', k:'Acción', run:() => openEventForm(null)}, {l:'Nuevo tema', k:'Acción', run:() => openTopicForm(null)}, {l:'Nuevo ejercicio', k:'Acción', run:() => openItemForm(null)}, {l:'Cambiar tema claro/oscuro', k:'Acción', run:toggleTheme});
@@ -964,6 +1307,7 @@ window.addEventListener('message', ev => {
   const d = ev.data; if (!d || typeof d !== 'object') return;
   if (d.type === 'calculai-ping' && ev.source){ try { ev.source.postMessage({type:'calculai-ready'}, ev.origin); } catch {} return; }
   if (d.type === 'calculai-webc' && Array.isArray(d.courses)){
+    if (d.auto){ if (ev.source === window && ev.origin === location.origin) applyAutoWebc(d); return; }
     try { ev.source && ev.source.postMessage({type:'calculai-received'}, ev.origin); } catch {}
     d.origin = d.origin || ev.origin; receiveWebc(d);
   }
@@ -992,7 +1336,7 @@ function extractDates(n){
       if (tm){ const H = +tm[1], Mi = tm[2] && tm[2].length === 2 ? tm[2] : '00'; if (H <= 23){ time = `${pad(H)}:${Mi}`; if (tm[3]) time += `–${pad(+tm[3])}:${tm[4]}`; } }
       let name = line.replace(new RegExp(DATE_RE.source, 'gi'), '').replace(/(?:a\s+las\s+)?\d{1,2}[:.h]\d{2}(\s*(hrs?|horas))?/gi, '').replace(/\b(lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo)\b/gi, '').replace(/\(\s*\)/g, '').replace(/\s{2,}/g, ' ').replace(/^[\s:,.\-–]+|[\s:,.\-–]+$/g, '');
       const kw = line.match(/\b(prueba|control|examen|certamen|solemne|entrega|informe|laboratorio|lab\s?\d*|proyecto|tarea|interrogaci[oó]n|bit[aá]cora)\b[^.,;\n]{0,48}/i);
-      if (kw){ let k2 = kw[0].replace(new RegExp(DATE_RE.source, 'gi'), '').replace(/(?:a\s+las\s+)?\d{1,2}[:.h]\d{2}(\s*(hrs?|horas))?/gi, '').replace(/\b(lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo)\b/gi, '').replace(/\s+(es|ser[aá]n?|se|queda|qued[oó]|cambia|para|el\s+d[ií]a|hasta|a\s+partir)\b.*$/i, '').replace(/\s{2,}/g, ' ').trim(); if (k2.length >= 3) name = k2.charAt(0).toUpperCase() + k2.slice(1); }
+      if (kw){ let k2 = kw[0].replace(new RegExp(DATE_RE.source, 'gi'), '').replace(/(?:a\s+las\s+)?\d{1,2}[:.h]\d{2}(\s*(hrs?|horas))?/gi, '').replace(/\b(lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo)\b/gi, '').replace(/\s+(es|ser[aá]n?|se|queda|qued[oó]|cambia|para|el\s+d[ií]a|hasta|a\s+partir)(?=\s|$).*$/i, '').replace(/\s{2,}/g, ' ').trim(); if (k2.length >= 3) name = k2.charAt(0).toUpperCase() + k2.slice(1); }
       if (name.length < 3) name = n.title; if (name.length > 70) name = name.slice(0, 67) + '…';
       out.push({date:iso(d), time, kind:kindOf(line + ' ' + (name === n.title ? n.title : '')), name, line:line.slice(0, 220)});
     }
@@ -1089,6 +1433,293 @@ function applyWebc(){
 }
 
 /* =========================================================
+   REVISIÓN AUTOMÁTICA AL ABRIR: WebC (script de revisión) + Outlook (opcional)
+   Lo que llega con fecha clara del calendario de WebC se agrega solo;
+   las fechas leídas en avisos o correos quedan en «Para revisar».
+   ========================================================= */
+const SYNC = {agent:null, agentWhy:'', webc:'idle', webcMsg:'', outlook:'idle', outlookMsg:'', lastPayload:null};
+const STALE_MIN = 15;
+const USERSCRIPT_URL = APP_BASE + 'calculai-sync.user.js';
+function syncData(){ D.sync = D.sync || {}; for (const k of ['inbox', 'dismissed', 'ignoredCourses']) if (!Array.isArray(D.sync[k])) D.sync[k] = []; return D.sync; }
+const minsSince = s => s ? (Date.now() - new Date(s).getTime()) / 60000 : Infinity;
+function agoMin(s){ const m = minsSince(s); if (!isFinite(m)) return 'nunca'; if (m < 1) return 'recién'; if (m < 60) return `hace ${Math.round(m)} min`; if (m < 1440) return `hace ${Math.round(m / 60)} h`; return `hace ${Math.round(m / 1440)} d`; }
+const webcBase = () => (D.sync && D.sync.webc && D.sync.webc.origin) || 'https://webc.uai.cl';
+
+function requestWebcSync(force){
+  if (!SYNC.agent || !D.subjects.length) return false;
+  if (!force && (SYNC.webc === 'checking' || SYNC.webc === 'reading' || minsSince(D.sync && D.sync.webc && D.sync.webc.at) < STALE_MIN)) return false;
+  SYNC.webc = 'checking'; SYNC.webcMsg = ''; paintSync();
+  window.postMessage({type:'calculai-sync-request', base:webcBase(), courses:D.subjects.map(s => s.webc).filter(Boolean)}, location.origin);
+  clearTimeout(SYNC._t); SYNC._t = setTimeout(() => { if (SYNC.webc === 'checking' || SYNC.webc === 'reading'){ SYNC.webc = 'error'; SYNC.webcMsg = 'WebC no respondió a tiempo'; paintSync(); } }, 180000);
+  return true;
+}
+function addToInbox(x){
+  const sd = syncData();
+  if (!x.date || sd.dismissed.includes(x.id) || sd.inbox.some(y => y.id === x.id)) return false;
+  if (D.events.some(e => e.webc === x.id || (x.subj && e.subj === x.subj && e.date === x.date && (e.kind === x.kind || norm(e.name) === norm(x.name))))) return false;
+  if (parse(x.date) < TODAY) return false;
+  sd.inbox.push({id:x.id, src:x.src, subj:x.subj || '', kind:x.kind, name:x.name, date:x.date, time:x.time || '', line:x.line || '', title:x.newsTitle || x.title || '', url:x.newsUrl || x.url || '', found:new Date().toISOString()});
+  return true;
+}
+function applyAutoWebc(d){
+  clearTimeout(SYNC._t);
+  SYNC.lastPayload = d;
+  const W2 = prepareWebc(d), sd = syncData();
+  const known = new Set((D.news || []).map(n => n.id));
+  let nE = 0, nU = 0, nR = 0, nN = 0, nS = 0;
+  const fresh = [];
+  W2.courses.forEach(row => {
+    const c = row.c, sid = row.target;
+    if (sid === 'new'){ if (!sd.ignoredCourses.includes(c.id)) fresh.push({id:c.id, name:c.name, code:c.code}); return; }
+    const s = D.subjects.find(x => x.id === sid); if (s){ s.webc = c.id; s.url = s.url || c.url; }
+    row.evs.filter(e => e.sel && !sd.dismissed.includes(e.id)).forEach(e => {
+      const ex = D.events.find(x => x.webc === e.id);
+      if (ex){ if (ex.date !== e.date || ex.time !== e.time){ ex.date = e.date; ex.time = e.time; ex.src = `WebC · calendario del curso (revisado ${fmtD(TODAY)})`; nU++; } }
+      else { D.events.push({id:uid('ev'), subj:sid, kind:e.kind, name:e.name, date:e.date, time:e.time, slot:'', ver:true, src:`WebC · calendario del curso (${fmtD(TODAY)})`, topics:[], scopeNote:'', note:'Agregada automáticamente desde el calendario de WebC.', webc:e.id, url:e.url}); nE++; }
+    });
+    c.resources.forEach(r => { if (!D.resources.some(x => x.url === r.url)){ D.resources.push({id:uid('r'), subj:sid, title:r.name, kind:({resource:'Archivo', url:'Enlace', folder:'Carpeta', page:'Página', assign:'Tarea', quiz:'Cuestionario', book:'Libro'}[r.type] || 'Recurso') + (r.section ? ' · ' + r.section : ''), url:r.url, webc:true}); nR++; } });
+    if (c.news.length){
+      D.news = (D.news || []).filter(n => !(n.subj === sid && n.src !== 'outlook'));
+      c.news.forEach(n => { const id = 'n-' + n.id; const isNew = !known.has(id); if (isNew) nN++; D.news.push({id, subj:sid, title:n.title, url:n.url, author:n.author, date:newsDate(n), text:n.text, src:'webc', fresh:isNew || undefined}); });
+    }
+    row.sugg.forEach(x => { if (!x.dup && !x.calDup && x.kind !== 'otro' && addToInbox({...x, subj:sid, src:'webc'})) nS++; });
+  });
+  (d.unlinked || []).forEach(c => { if (!sd.ignoredCourses.includes(c.id) && !fresh.some(f => f.id === c.id)) fresh.push(c); });
+  sd.newCourses = fresh;
+  sd.webc = {origin:W2.origin, at:W2.at, auto:true, last:{nE, nU, nR, nN, nS}};
+  SYNC.webc = 'ok'; SYNC.webcMsg = '';
+  save(); render();
+  const parts = [nE && plural(nE, 'fecha nueva', 'fechas nuevas'), nU && plural(nU, 'fecha cambiada', 'fechas cambiadas'), nN && plural(nN, 'aviso nuevo', 'avisos nuevos'), nR && plural(nR, 'recurso nuevo', 'recursos nuevos'), nS && plural(nS, 'fecha por revisar', 'fechas por revisar')].filter(Boolean);
+  toast(parts.length ? 'WebC: ' + parts.join(' · ') : 'WebC revisado: sin novedades');
+}
+
+/* ---------- Outlook (Microsoft Graph, solo lectura, opcional) ---------- */
+const MS_KEY = 'calculai-ms', MS_SCOPE = 'offline_access User.Read Mail.Read', MS_REDIRECT = APP_BASE + 'oauth.html';
+const msCfg = () => { try { return JSON.parse(localStorage.getItem(MS_KEY) || '{}'); } catch { return {}; } };
+const msSave = c => { try { localStorage.setItem(MS_KEY, JSON.stringify(c)); } catch {} };
+const msConnected = () => { const c = msCfg(); return !!(c.clientId && (c.refresh || c.access)); };
+const b64url = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const msAuthority = c => `https://login.microsoftonline.com/${encodeURIComponent(c.tenant || 'common')}/oauth2/v2.0`;
+async function msConnect(){
+  const c = msCfg(); if (!c.clientId){ toast('Primero pega el Id. de aplicación y guarda'); return; }
+  const verifier = b64url(crypto.getRandomValues(new Uint8Array(32)));
+  const challenge = b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
+  const state = b64url(crypto.getRandomValues(new Uint8Array(16)));
+  const url = msAuthority(c) + '/authorize?' + new URLSearchParams({client_id:c.clientId, response_type:'code', redirect_uri:MS_REDIRECT, response_mode:'query', scope:MS_SCOPE, code_challenge:challenge, code_challenge_method:'S256', state, prompt:'select_account'});
+  const w = window.open(url, 'calculai-ms', 'width=520,height=700');
+  try { localStorage.setItem('calculai-ms-pkce', JSON.stringify({verifier, state, mode:w ? 'popup' : 'tab', at:Date.now()})); } catch {}
+  if (!w) location.href = url;
+  else { SYNC.outlook = 'checking'; SYNC.outlookMsg = 'Esperando el inicio de sesión de Microsoft…'; paintSync(); }
+}
+async function msTokenRequest(params){
+  const c = msCfg();
+  const r = await fetch(msAuthority(c) + '/token', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:new URLSearchParams({client_id:c.clientId, scope:MS_SCOPE, ...params})});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.access_token){ const e = new Error(j.error_description ? j.error_description.split('\r\n')[0] : `error ${r.status}`); e.code = j.error; throw e; }
+  const n = msCfg(); n.access = j.access_token; n.exp = Date.now() + (j.expires_in || 3600) * 1000; if (j.refresh_token) n.refresh = j.refresh_token; msSave(n);
+  return n.access;
+}
+async function msFinish(q){
+  let pk = null; try { pk = JSON.parse(localStorage.getItem('calculai-ms-pkce') || 'null'); localStorage.removeItem('calculai-ms-pkce'); } catch {}
+  const p = new URLSearchParams(q);
+  try {
+    if (p.get('error')) throw new Error((p.get('error_description') || p.get('error')).split('\r\n')[0]);
+    if (!pk || !p.get('code') || p.get('state') !== pk.state) throw new Error('la respuesta de Microsoft no coincide con esta solicitud; vuelve a intentarlo');
+    await msTokenRequest({grant_type:'authorization_code', code:p.get('code'), redirect_uri:MS_REDIRECT, code_verifier:pk.verifier});
+    toast('Outlook conectado');
+    await outlookSync(true);
+  } catch (e) { SYNC.outlook = 'error'; SYNC.outlookMsg = msExplain(e.message); paintSync(); render(); }
+}
+function msExplain(m){
+  m = String(m || '');
+  if (/AADSTS(90094|65001|90008)|admin|administrador/i.test(m)) return 'Microsoft pide la aprobación de un administrador de tu institución para dar este permiso. Sin esa aprobación no se puede leer el correo desde Calculai. (' + m.slice(0, 140) + ')';
+  if (/AADSTS50011|redirect/i.test(m)) return 'La dirección de retorno no coincide. En el registro de la app agrega exactamente: ' + MS_REDIRECT;
+  if (/AADSTS700016|application.*not found/i.test(m)) return 'Microsoft no encuentra ese Id. de aplicación. Revisa que lo copiaste completo.';
+  return m.slice(0, 220);
+}
+async function msToken(){
+  const c = msCfg();
+  if (c.access && c.exp > Date.now() + 60000) return c.access;
+  if (!c.refresh) throw Object.assign(new Error('Vuelve a conectar Outlook'), {code:'reconnect'});
+  try { return await msTokenRequest({grant_type:'refresh_token', refresh_token:c.refresh}); }
+  catch (e) { const n = msCfg(); delete n.refresh; delete n.access; msSave(n); throw Object.assign(new Error('La conexión con Outlook expiró: vuelve a conectarla'), {code:'reconnect'}); }
+}
+function subjOfText(txt){
+  const t = norm(txt || '');
+  const s = D.subjects.find(s => s.code && t.includes(norm(s.code))) || D.subjects.find(s => s.name && t.includes(norm(s.name))) || D.subjects.find(s => s.short && s.short.length >= 4 && t.includes(norm(s.short)));
+  return s ? s.id : '';
+}
+async function outlookSync(force){
+  if (!msConnected()) return;
+  if (!force && (SYNC.outlook === 'checking' || minsSince(D.sync && D.sync.outlook && D.sync.outlook.at) < STALE_MIN)) return;
+  SYNC.outlook = 'checking'; SYNC.outlookMsg = ''; paintSync();
+  try {
+    const tok = await msToken();
+    const since = (D.sync && D.sync.outlook && D.sync.outlook.at) || new Date(Date.now() - 14 * 86400000).toISOString();
+    const q = {'$filter':`receivedDateTime ge ${since.replace(/\.\d+Z$/, 'Z')}`, '$orderby':'receivedDateTime desc', '$top':'50', '$select':'id,subject,from,receivedDateTime,body,webLink'};
+    const url = 'https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?' + Object.entries(q).map(([k, v]) => k + '=' + encodeURIComponent(v)).join('&');
+    const r = await fetch(url, {headers:{Authorization:'Bearer ' + tok, Prefer:'outlook.body-content-type="text"'}});
+    if (r.status === 401){ const n = msCfg(); delete n.access; msSave(n); throw Object.assign(new Error('La conexión con Outlook expiró: vuelve a conectarla'), {code:'reconnect'}); }
+    if (!r.ok){ const j = await r.json().catch(() => ({})); throw new Error((j.error && j.error.message) || `Graph respondió ${r.status}`); }
+    const msgs = (await r.json()).value || [];
+    const kws = String(msCfg().keywords || 'webc').split(',').map(x => norm(x.trim())).filter(Boolean);
+    const known = new Set((D.news || []).map(n => n.id));
+    let nN = 0, nS = 0;
+    msgs.forEach(m => {
+      const from = (m.from && m.from.emailAddress) || {};
+      const head = [from.name, from.address, m.subject].join(' ');
+      const body = String((m.body && m.body.content) || '');
+      const sid = subjOfText(m.subject + ' ' + body.slice(0, 600));
+      if (!kws.some(k => norm(head).includes(k)) && !subjOfText(m.subject || '')) return;
+      const id = 'ol-' + m.id; if (known.has(id)) return;
+      const date = iso(new Date(m.receivedDateTime));
+      D.news = D.news || [];
+      D.news.push({id, subj:sid, title:m.subject || '(sin asunto)', url:m.webLink || '', author:from.name || from.address || '', date, text:body.slice(0, 5000), src:'outlook', fresh:true}); nN++;
+      extractDates({id:m.id, title:m.subject || '', text:body, date}).forEach(x => { if (x.kind !== 'otro' && addToInbox({...x, id:'mail:' + m.id + ':' + x.date + ':' + norm(x.name).slice(0, 20), subj:sid, src:'outlook', newsTitle:m.subject, newsUrl:m.webLink})) nS++; });
+    });
+    if (D.news && D.news.length > 300) D.news = D.news.sort((a, b) => (b.date || '').localeCompare(a.date || '')).slice(0, 300);
+    syncData().outlook = {at:new Date().toISOString(), last:{nN, nS}};
+    SYNC.outlook = 'ok'; SYNC.outlookMsg = '';
+    save(); render();
+    if (nN || nS) toast(`Outlook: ${[nN && plural(nN, 'correo del curso', 'correos del curso'), nS && plural(nS, 'fecha por revisar', 'fechas por revisar')].filter(Boolean).join(' · ')}`);
+  } catch (e) {
+    SYNC.outlook = e.code === 'reconnect' ? 'reconnect' : 'error'; SYNC.outlookMsg = e.code === 'reconnect' ? e.message : msExplain(e.message); paintSync();
+  }
+}
+function msDisconnect(){ const c = msCfg(); delete c.access; delete c.refresh; delete c.exp; msSave(c); SYNC.outlook = 'idle'; render(); toast('Outlook desconectado de este navegador'); }
+
+/* ---------- Mensajes del script de revisión y del inicio de sesión ---------- */
+window.addEventListener('message', ev => {
+  const d = ev.data; if (!d || typeof d !== 'object' || ev.origin !== location.origin) return;
+  if (d.type === 'calculai-oauth' && typeof d.q === 'string'){ msFinish(d.q); return; }
+  if (ev.source !== window) return;
+  if (d.type === 'calculai-agent-hello'){ SYNC.agent = d.ok ? d.v || '1' : null; SYNC.agentWhy = d.why || ''; paintSync(); if (d.ok) requestWebcSync(false); }
+  else if (d.type === 'calculai-sync-status'){
+    if (d.state === 'login'){ clearTimeout(SYNC._t); SYNC.webc = 'login'; }
+    else if (d.state === 'error'){ clearTimeout(SYNC._t); SYNC.webc = 'error'; SYNC.webcMsg = d.msg || ''; }
+    else { SYNC.webc = d.state; SYNC.webcMsg = d.msg || ''; }
+    paintSync();
+  }
+});
+window.addEventListener('storage', ev => { if (ev.key === 'calculai-oauth-return' && ev.newValue){ try { localStorage.removeItem('calculai-oauth-return'); } catch {} msFinish(ev.newValue); } });
+function startAutoSync(){
+  try { const q = localStorage.getItem('calculai-oauth-return'); if (q){ localStorage.removeItem('calculai-oauth-return'); history.replaceState(null, '', location.pathname); msFinish(q); } } catch {}
+  window.postMessage({type:'calculai-agent-ping'}, location.origin);
+  outlookSync(false);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible'){ requestWebcSync(false); outlookSync(false); } });
+}
+
+/* ---------- Barra de estado y bandeja «Para revisar» ---------- */
+function syncStrip(){ const el = h('div', {id:'syncStrip', class:'sync-strip', 'aria-live':'polite'}); setTimeout(paintSync, 0); return el; }
+function paintSync(){
+  const el = document.getElementById('syncStrip'); if (!el) return;
+  const sd = D.sync || {}, w = sd.webc;
+  const link = (lbl, fn) => h('button', {class:'linkbtn', type:'button', onclick:fn}, lbl);
+  let webc;
+  if (!SYNC.agent){
+    webc = h('span', {class:'ss-item ' + (minsSince(w && w.at) > 1440 ? 'ss-warn' : '')}, h('i', {class:'ss-dot'}), `WebC ${w ? 'leído ' + agoMin(w.at) : 'sin conectar'} · `,
+      link('Activar revisión automática', openAutoSyncHelp), ' · ', link('Actualizar con el marcador', openWebcHelp));
+  } else if (SYNC.webc === 'checking' || SYNC.webc === 'reading'){
+    webc = h('span', {class:'ss-item ss-busy'}, h('i', {class:'ss-dot'}), `Revisando WebC${SYNC.webcMsg ? ' (curso ' + SYNC.webcMsg + ')' : ''}…`);
+  } else if (SYNC.webc === 'login'){
+    webc = h('span', {class:'ss-item ss-warn'}, h('i', {class:'ss-dot'}), 'Para revisar WebC, inicia sesión: ', h('a', {href:webcBase() + '/my/', target:'_blank', rel:'noopener'}, 'abrir WebC ↗'), ' · ', link('Reintentar', () => requestWebcSync(true)));
+  } else if (SYNC.webc === 'error'){
+    webc = h('span', {class:'ss-item ss-warn'}, h('i', {class:'ss-dot'}), `No pude revisar WebC${SYNC.webcMsg ? ' (' + SYNC.webcMsg + ')' : ''} · `, link('Reintentar', () => requestWebcSync(true)));
+  } else {
+    const l = w && w.last;
+    webc = h('span', {class:'ss-item ss-ok'}, h('i', {class:'ss-dot'}), `WebC revisado ${agoMin(w && w.at)}`, l && (l.nE + l.nN + l.nU) ? ` · ${[l.nE && plural(l.nE, 'fecha nueva', 'fechas nuevas'), l.nU && plural(l.nU, 'cambio', 'cambios'), l.nN && plural(l.nN, 'aviso nuevo', 'avisos nuevos')].filter(Boolean).join(', ')}` : '', ' · ', link('Revisar ahora', () => requestWebcSync(true)));
+  }
+  let ol = null;
+  const c = msCfg();
+  if (msConnected() || SYNC.outlook === 'error' || SYNC.outlook === 'reconnect' || SYNC.outlook === 'checking'){
+    if (SYNC.outlook === 'checking') ol = h('span', {class:'ss-item ss-busy'}, h('i', {class:'ss-dot'}), SYNC.outlookMsg || 'Revisando Outlook…');
+    else if (SYNC.outlook === 'reconnect') ol = h('span', {class:'ss-item ss-warn'}, h('i', {class:'ss-dot'}), 'Outlook: ', link('volver a conectar', msConnect));
+    else if (SYNC.outlook === 'error') ol = h('span', {class:'ss-item ss-warn', title:SYNC.outlookMsg}, h('i', {class:'ss-dot'}), 'Outlook: no se pudo revisar · ', link('ver detalle', () => go('editar')));
+    else ol = h('span', {class:'ss-item ss-ok'}, h('i', {class:'ss-dot'}), `Outlook revisado ${agoMin(sd.outlook && sd.outlook.at)} · `, link('Revisar ahora', () => outlookSync(true)));
+  } else if (c.clientId) ol = h('span', {class:'ss-item'}, h('i', {class:'ss-dot'}), 'Outlook: ', link('conectar', msConnect));
+  const nc = (sd.newCourses || []).filter(x => !(sd.ignoredCourses || []).includes(x.id));
+  el.replaceChildren(...[webc, ol, nc.length ? h('span', {class:'ss-item ss-warn'}, h('i', {class:'ss-dot'}), `${plural(nc.length, 'curso nuevo', 'cursos nuevos')} en WebC (${nc.map(x => x.name).join(', ')}) · `,
+    SYNC.lastPayload ? link('Agregar', () => receiveWebc(SYNC.lastPayload)) : link('Agregar', openWebcHelp), ' · ', link('Ignorar', () => { syncData().ignoredCourses.push(...nc.map(x => x.id)); save(); paintSync(); })) : null].filter(Boolean));
+}
+function inboxCard(){
+  const sd = syncData(); const items = sd.inbox.filter(x => parse(x.date) >= TODAY).sort((a, b) => a.date.localeCompare(b.date));
+  if (sd.inbox.length !== items.length){ sd.inbox = items; save(); }
+  if (!items.length) return null;
+  const confirmX = x => {
+    if (!x.subj){ toast('Elige a qué materia corresponde'); return false; }
+    D.events.push({id:uid('ev'), subj:x.subj, kind:x.kind, name:(x.name || x.title).trim(), date:x.date, time:(x.time || '').trim(), slot:'', ver:true, src:x.src === 'outlook' ? `Outlook · correo «${x.title}»` : `WebC · aviso «${x.title}»`, topics:[], scopeNote:'', note:'Fecha leída automáticamente y confirmada por ti.', webc:x.id});
+    sd.inbox = sd.inbox.filter(y => y.id !== x.id); return true;
+  };
+  const dismiss = x => { sd.inbox = sd.inbox.filter(y => y.id !== x.id); sd.dismissed.push(x.id); };
+  return h('section', {class:'card inbox'},
+    h('div', {class:'ib-head'}, h('h3', null, `Para revisar · ${items.length}`), h('span', {class:'tiny muted'}, 'Fechas que encontré en avisos de WebC y correos. Agrégalas solo si corresponden.'),
+      items.length > 1 ? h('button', {class:'btn ghost small', type:'button', onclick:() => { let n = 0; items.slice().forEach(x => { if (confirmX(x)) n++; }); save(); render(); toast(`${plural(n, 'fecha agregada', 'fechas agregadas')}`); }}, 'Agregar todas') : null),
+    h('div', {class:'wlist'}, items.map(x => h('div', {class:'wrow sugg ib-row', style:x.subj ? scs(x.subj) : ''},
+      h('div', {style:'min-width:0;flex:1'},
+        h('div', {class:'srow'},
+          h('span', {class:'chip ib-src'}, x.src === 'outlook' ? '✉ Outlook' : '⟳ WebC'),
+          h('select', {'aria-label':'Materia', onchange:ev => { x.subj = ev.target.value; save(); }}, h('option', {value:''}, 'Materia…'), D.subjects.map(s => { const o = h('option', {value:s.id}, s.short); if (x.subj === s.id) o.selected = true; return o; })),
+          h('select', {'aria-label':'Tipo', onchange:ev => { x.kind = ev.target.value; save(); }}, Object.entries(KIND).map(([k, o]) => { const op = h('option', {value:k}, o.l); if (x.kind === k) op.selected = true; return op; })),
+          h('input', {type:'text', value:x.name, 'aria-label':'Nombre', oninput:ev => { x.name = ev.target.value; }, onchange:save}),
+          h('input', {type:'date', value:x.date, 'aria-label':'Fecha', onchange:ev => { x.date = ev.target.value; save(); }}),
+          h('input', {type:'text', value:x.time, placeholder:'hora', style:'width:96px', 'aria-label':'Hora', onchange:ev => { x.time = ev.target.value; save(); }})),
+        h('div', {class:'tiny muted', style:'margin-top:4px'}, x.line ? '«' + x.line + '» — ' : '', x.url ? h('a', {href:x.url, target:'_blank', rel:'noopener'}, x.title || 'ver origen') : x.title)),
+      h('div', {class:'ib-act'},
+        h('button', {class:'btn small', type:'button', onclick:() => { if (confirmX(x)){ save(); render(); toast('Agregada al calendario'); } }}, '✓ Agregar'),
+        h('button', {class:'btn ghost small', type:'button', onclick:() => { dismiss(x); save(); render(); }}, 'Descartar'))))));
+}
+
+/* ---------- Pantallas de configuración ---------- */
+function openAutoSyncHelp(){
+  $('#drawer').classList.add('wide');
+  openDrawer(h('div', {class:'drawer-head'}, h('div', {style:'flex:1'}, h('h3', null, 'Revisión automática de WebC')), h('button', {class:'iconbtn', type:'button', 'aria-label':'Cerrar', onclick:closeDrawer}, '✕')),
+    h('div', {class:'drawer-body'}, autoSyncSteps()));
+}
+function autoSyncSteps(){
+  return h('div', null,
+    h('p', {class:'tiny muted', style:'margin:0 0 10px'}, 'Una página web no puede entrar a WebC por su cuenta: WebC usa inicio de sesión con Microsoft. Por eso Calculai usa un pequeño script de revisión que corre en tu navegador, con tu sesión de WebC ya abierta. Así, cada vez que abres Calculai, se revisa WebC solo. Sin contraseñas y sin servidores intermedios.'),
+    SYNC.agent ? h('p', {class:'note', style:'margin:0 0 10px'}, `✓ El script de revisión está activo en este navegador (versión ${SYNC.agent}).`) : null,
+    h('ol', {class:'tiny', style:'padding-left:18px;margin:6px 0 12px;line-height:1.7'},
+      h('li', null, h('b', null, 'Instala la extensión gratuita Tampermonkey '), '(Chrome, Edge, Firefox o Safari en computador) desde la tienda de extensiones de tu navegador.'),
+      h('li', null, h('b', null, 'Solo en Chrome o Edge: '), 'clic derecho en el ícono de Tampermonkey → «Administrar extensión» → activa «Permitir scripts de usuario» (Chrome 138 o más nuevo). En versiones anteriores, activa el «Modo de desarrollador» en chrome://extensions.'),
+      h('li', null, h('b', null, 'Instala el script: '), h('a', {class:'btn small hlbtn', href:USERSCRIPT_URL, target:'_blank', rel:'noopener', style:'margin:4px 0'}, '⟳ Instalar revisión automática'), ' y en la ventana de Tampermonkey presiona «Instalar».'),
+      h('li', null, h('b', null, 'Inicia sesión en WebC '), 'una vez en este navegador (', h('a', {href:webcBase() + '/my/', target:'_blank', rel:'noopener'}, 'abrir WebC ↗'), ').'),
+      h('li', null, h('b', null, 'Recarga Calculai. '), 'Arriba, en «Ahora», verás «Revisando WebC…» y luego el resumen. La primera vez Tampermonkey puede pedirte permiso para conectarse a webc.uai.cl: elige «Permitir siempre».')),
+    h('div', {class:'card', style:'background:var(--card-2)'},
+      h('b', null, 'Qué se actualiza solo'), h('ul', {class:'tiny', style:'margin:6px 0 0;padding-left:18px'},
+        h('li', null, 'Fechas del calendario de WebC de tus cursos (entregas, controles): se agregan o se corrigen si cambiaron. Si borras una, no vuelve a aparecer.'),
+        h('li', null, 'Avisos de los profesores y recursos nuevos (guías, archivos).'),
+        h('li', null, 'Fechas escritas dentro de los avisos: quedan en «Para revisar», porque leerlas del texto puede fallar.'))),
+    h('p', {class:'tiny muted', style:'margin-top:10px'}, 'En el celular depende del navegador: Firefox para Android acepta Tampermonkey; en iPhone no puedo confirmar que funcione igual. Ahí sigue sirviendo el marcador «Enviar a Calculai» o «Pasar a otro dispositivo».'));
+}
+function outlookCard(){
+  const c = msCfg(), sd = D.sync || {};
+  const idIn = h('input', {type:'text', value:c.clientId || '', placeholder:'00000000-0000-0000-0000-000000000000', 'aria-label':'Id. de aplicación (cliente)', class:'ai-key-in', style:'max-width:360px'});
+  const tenIn = h('input', {type:'text', value:c.tenant || 'common', 'aria-label':'Inquilino', class:'ai-key-in', style:'max-width:160px'});
+  const kwIn = h('input', {type:'text', value:c.keywords || 'webc', 'aria-label':'Palabras para reconocer correos', class:'ai-key-in', style:'max-width:320px'});
+  const saveCfg = () => { const n = msCfg(); const changed = n.clientId !== idIn.value.trim() || (n.tenant || 'common') !== (tenIn.value.trim() || 'common'); n.clientId = idIn.value.trim(); n.tenant = tenIn.value.trim() || 'common'; n.keywords = kwIn.value.trim() || 'webc'; if (changed){ delete n.access; delete n.refresh; } msSave(n); };
+  const field = (lbl, inp, help) => h('label', {class:'field', style:'margin:0 0 8px'}, h('span', null, lbl), inp, help ? h('small', {class:'tiny muted'}, help) : null);
+  return h('section', {class:'edit-sec card'},
+    h('h3', {class:'display', style:'margin:0 0 4px;font-size:1.15rem'}, '✉ Conectar Outlook (opcional)'),
+    h('p', {class:'tiny muted', style:'margin:0 0 8px'}, 'Al abrir Calculai, lee los correos nuevos de tu bandeja que vengan de WebC o mencionen tus cursos, los guarda en Biblioteca → Avisos y pasa las fechas que encuentre a «Para revisar». Solo pide permiso de lectura (Mail.Read). El acceso queda guardado en este navegador y los correos se leen directo desde Microsoft.'),
+    msConnected() ? h('p', {class:'note', style:'margin:0 0 8px'}, `✓ Conectado · última revisión ${agoMin(sd.outlook && sd.outlook.at)}`) : null,
+    SYNC.outlookMsg && (SYNC.outlook === 'error' || SYNC.outlook === 'reconnect') ? h('p', {class:'card warn tiny', style:'margin:0 0 8px'}, SYNC.outlookMsg) : null,
+    field('Id. de aplicación (cliente)', idIn), field('Inquilino', tenIn, '«common» sirve para cuentas de la universidad y personales.'), field('Palabras para reconocer correos', kwIn, 'Separadas por coma. También se reconocen los correos que nombran el código o el nombre de tus materias.'),
+    h('div', {class:'ai-row'},
+      h('button', {class:'btn small', type:'button', onclick:() => { saveCfg(); msConnect(); }}, msConnected() ? 'Volver a conectar' : 'Guardar y conectar con Microsoft'),
+      msConnected() ? h('button', {class:'btn ghost small', type:'button', onclick:() => outlookSync(true)}, 'Revisar ahora') : null,
+      msConnected() ? h('button', {class:'btn ghost small', type:'button', onclick:msDisconnect}, 'Desconectar') : h('button', {class:'btn ghost small', type:'button', onclick:() => { saveCfg(); toast('Guardado'); }}, 'Solo guardar')),
+    h('details', {style:'margin-top:12px'}, h('summary', {class:'tiny', style:'cursor:pointer;font-weight:700'}, 'Cómo obtener el Id. de aplicación (una sola vez, ~5 min)'),
+      h('ol', {class:'tiny', style:'padding-left:18px;line-height:1.7'},
+        h('li', null, 'Entra a ', h('a', {href:'https://entra.microsoft.com/', target:'_blank', rel:'noopener'}, 'entra.microsoft.com ↗'), ' con tu cuenta y ve a «Aplicaciones» → «Registros de aplicaciones» → «Nuevo registro».'),
+        h('li', null, 'Nombre: Calculai. Tipos de cuenta: «Cuentas de cualquier directorio organizativo y cuentas personales de Microsoft».'),
+        h('li', null, 'URI de redirección: plataforma «Aplicación de página única (SPA)» y esta dirección exacta: ', h('code', {class:'mono'}, MS_REDIRECT), ' ', h('button', {class:'linkbtn', type:'button', onclick:async () => { try { await navigator.clipboard.writeText(MS_REDIRECT); toast('Copiada'); } catch { toast('Selecciónala y cópiala'); } }}, 'copiar')),
+        h('li', null, 'Presiona «Registrar», copia el «Id. de aplicación (cliente)» y pégalo arriba.'),
+        h('li', null, 'Presiona «Guardar y conectar con Microsoft» y acepta el permiso de lectura de correo.')),
+      h('p', {class:'tiny muted'}, 'No puedo confirmar si la UAI permite que estudiantes registren apps o den este permiso por su cuenta: si Microsoft responde que se necesita aprobación de un administrador, esta conexión no se puede usar sin TI. La revisión automática de WebC funciona igual sin Outlook. Las conexiones de Microsoft desde páginas como esta duran hasta 24 horas; después, Calculai te pedirá volver a conectar con un clic.')));
+}
+
+/* =========================================================
    TEMA, PWA, ARRANQUE
    ========================================================= */
 function toggleTheme(){
@@ -1110,7 +1741,13 @@ document.addEventListener('DOMContentLoaded', () => {
     else if (e.key === 'Enter' && palItems[palSel]){ const x = palItems[palSel]; closePal(); x.run(); }
   });
   $('#pal').addEventListener('click', e => { if (e.target.id === 'pal') closePal(); });
-  $('#scrim').addEventListener('click', closeDrawer);
+  $('#scrim').addEventListener('click', () => { closeDrawer(); closeSidebar(); });
+  const sbBtn = $('#sidebarBtn');
+  if (sbBtn) sbBtn.addEventListener('click', () => {
+    const sb = $('#sidebar'), sc = $('#scrim');
+    if (sb.classList.contains('open')){ closeSidebar(); }
+    else { sb.classList.add('open'); sc.classList.add('on'); }
+  });
   document.addEventListener('keydown', e => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k'){ e.preventDefault(); $('#pal').classList.contains('on') ? closePal() : openPal(); }
     else if (e.key === 'Escape'){ if ($('#pal').classList.contains('on')) closePal(); else if ($('#drawer').classList.contains('open')) closeDrawer(); }
@@ -1118,6 +1755,6 @@ document.addEventListener('DOMContentLoaded', () => {
   let deferred = null;
   window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferred = e; $('#installBtn').hidden = false; });
   $('#installBtn').addEventListener('click', async () => { if (!deferred) return; deferred.prompt(); await deferred.userChoice.catch(() => {}); deferred = null; $('#installBtn').hidden = true; });
-  syncBadge(); render();
+  syncBadge(); render(); startAutoSync();
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => {});
 });

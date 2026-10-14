@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Calculai · conectando</title>
+<style>body{font:16px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;background:#f5f2e8;color:#16223d;display:grid;place-items:center;min-height:100vh;margin:0;padding:16px;text-align:center}@media (prefers-color-scheme:dark){body{background:#0c2140;color:#eaf2ff}}</style>
+</head>
+<body>
+<p id="msg">Conectando con Calculai…</p>
+<script>
+/* Recibe la respuesta del inicio de sesión de Microsoft y se la entrega a la pestaña de Calculai.
+   No guarda nada: Calculai cambia el código por el acceso y borra estos datos. */
+(function(){
+  var q = location.search || location.hash.replace(/^#/, '?');
+  var mode = 'popup';
+  try { mode = (JSON.parse(localStorage.getItem('calculai-ms-pkce') || '{}').mode) || 'popup'; } catch (e) {}
+  var sent = false;
+  try { if (window.opener && window.opener !== window){ window.opener.postMessage({type:'calculai-oauth', q:q}, location.origin); sent = true; } } catch (e) {}
+  if (!sent){ try { localStorage.setItem('calculai-oauth-return', q); } catch (e) {} }
+  if (mode === 'tab' && !sent){ location.replace('./?oauth=1'); return; }
+  document.getElementById('msg').textContent = 'Listo. Ya puedes cerrar esta ventana y volver a Calculai.';
+  setTimeout(function(){ try { window.close(); } catch (e) {} }, 300);
+})();
+</script>
+</body>
+</html>
