@@ -1,5 +1,31 @@
 /* Calculai — app de estudio. Funciona en cualquier navegador; los datos viven en este dispositivo. */
 'use strict';
+/* ===========================================================================
+   ÍNDICE (busca el título de la sección tal cual; no uses números de línea)
+   ---------------------------------------------------------------------------
+   UTILIDADES ............ h() (crea DOM), $, fechas, toast(msg, ms)
+   DATOS ... Y PROGRESO .. D (datos) y P (progreso): blankData/blankProg, normData/normProg, save()
+   MOTOR «¿QUÉ HAGO AHORA?» score(), ranked(), buildSession()
+   NAVEGACIÓN ............ TABS, go(), render() y las vistas:
+                           vWelcome · vAhora · vMapa · vPractica · vErrores · vCal (vMonth, vAgenda) · vBiblio
+   CLASES ................ vClases, vLesson, visor de Drive/YouTube/PDF (embedUrl, viewer)
+     · Clases guardadas .. paquete de clases en IndexedDB «calculai-clases» (ldbPut/ldbGet, savedFrame, importPack)
+     · IA ................ AI_MODES, aiPrompt, callAI, openAIPanel
+   EDITAR ................ formularios, vEditar, respaldo, importFile/importPack
+   MODO ENFOQUE · BUSCADOR (Ctrl+K) · EJEMPLO (makeExample)
+   CONECTAR CON WEBC ..... marcador «Enviar a Calculai» (conector.js): receiveWebc, prepareWebc, vWebcReview
+   REVISIÓN AUTOMÁTICA ... script calculai-sync.user.js: requestWebcSync, applyAutoWebc, novedadesCard,
+                           Outlook (msConnect, outlookSync), syncStrip/paintSync, inboxCard
+   TEMA, PWA, ARRANQUE ... tema claro/oscuro, service worker, arranque (startAutoSync, loadLessonKeys)
+
+   REGLAS QUE NO SE ROMPEN (detalle en ARQUITECTURA.md)
+   1. La revisión de WebC/Outlook solo agrega o actualiza D.events, D.resources, D.news y D.sync.
+      Nunca toca D.topics, D.items, el progreso P ni las clases guardadas.
+   2. Las clases guardadas viven en IndexedDB, no en D: ni «Borrar todo» de datos ni la sync las tocan.
+   3. normData/normProg solo copian claves que existen en blankData/blankProg: un campo nuevo en D o P
+      debe agregarse primero ahí, o se pierde al recargar.
+   4. Al agregar una función, ponla dentro de su sección y súmala a este índice.
+   =========================================================================== */
 
 /* =========================================================
    UTILIDADES
@@ -53,7 +79,7 @@ const DIAS = ['domingo','lunes','martes','miércoles','jueves','viernes','sábad
 const fmtD = d => `${DIAS[d.getDay()]} ${d.getDate()} ${MESES[d.getMonth()]}`;
 const cap = s => s.replace(/^./, c => c.toUpperCase());
 const uid = (p = 'x') => p + '-' + Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-3);
-function toast(msg){ const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('on'), 2400); }
+function toast(msg, ms = 2400){ const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('on'), ms); }
 const countdown = d => d === 0 ? 'hoy' : d === 1 ? 'mañana' : d < 0 ? 'ya pasó' : `en ${d} días`;
 const agoTxt = d => d <= 0 ? 'hoy' : d === 1 ? 'ayer' : `hace ${d} días`;
 const plural = (n, a, b) => `${n} ${n === 1 ? a : b}`;
@@ -202,7 +228,7 @@ function vWelcome(v){
       h('button', {class:'choice', type:'button', onclick:startEmpty}, h('span', {class:'ico'}, '✎'), h('b', null, 'Empezar desde cero'), h('span', null, 'Creo mi primera materia y voy agregando lo demás.')),
       h('button', {class:'choice', type:'button', onclick:() => { D = makeExample(); P = blankProg(); save(); go('ahora'); toast('Cargué un ejemplo: edítalo o bórralo cuando quieras'); }}, h('span', {class:'ico'}, '◎'), h('b', null, 'Ver un ejemplo'), h('span', null, 'Tres materias de muestra para conocer la app. Después lo borras.')),
       h('button', {class:'choice', type:'button', onclick:openWebcHelp}, h('span', {class:'ico'}, '⟳'), h('b', null, 'Conectar con WebC'), h('span', null, 'Trae tus cursos, fechas, recursos y avisos desde WebC (o tu Moodle).')),
-      h('button', {class:'choice', type:'button', onclick:() => file.click()}, h('span', {class:'ico'}, '⇪'), h('b', null, 'Abrir un archivo'), h('span', null, 'Un respaldo tuyo o una plantilla que te compartió alguien de tu curso.'))),
+      h('button', {class:'choice', type:'button', onclick:() => file.click()}, h('span', {class:'ico'}, '⇪'), h('b', null, 'Abrir un archivo'), h('span', null, 'Un respaldo tuyo, tu paquete de clases o una plantilla que te compartió alguien de tu curso.'))),
     file,
     h('div', {class:'feat'},
       h('div', null, h('b', null, '¿Qué hago ahora?'), 'Un plan de una hora según tus fechas y lo que te falta.'),
@@ -217,6 +243,7 @@ function startEmpty(){
 }
 
 /* ---------------- AHORA ---------------- */
+/* ---------- Vista: Ahora ---------- */
 function vAhora(v){
   const hr = new Date().getHours();
   const saludo = hr < 12 ? 'Buenos días' : hr < 20 ? 'Buenas tardes' : 'Buenas noches';
@@ -227,6 +254,7 @@ function vAhora(v){
       syncStrip(),
       h('p', null, first ? `Próximos 30 días: ${plural(upcoming.length, 'evaluación', 'evaluaciones')}. La más cercana: ${S(first.subj).short} · ${first.name}, ${countdown(diffDays(TODAY, parse(first.date)))}.` : 'No tienes evaluaciones en los próximos 30 días. Agrégalas en Editar.'))));
 
+  const nv = novedadesCard(); if (nv) v.append(nv);
   const ib = inboxCard(); if (ib) v.append(ib);
   const lastL = P.lastLesson && topic(P.lastLesson);
   if (lastL) v.append(h('button', {class:'card cl-cont cl-strip', type:'button', style:scs(lastL.subj), onclick:() => openLesson(lastL.id)}, h('small', {class:'kicker'}, '▤ Continuar tu clase'), h('b', null, lastL.title), h('span', {class:'tiny muted'}, S(lastL.subj).name + ' · ' + (hasLesson(lastL) ? readMin(lastL) + ' min de lectura' : 'material del curso'))));
@@ -320,6 +348,7 @@ function depthOf(t, memo = {}, seen = new Set()){
   return memo[t.id] = pre.length ? 1 + Math.max(...pre.map(p => depthOf(p, memo, seen))) : 0;
 }
 let mapRO = null;
+/* ---------- Vista: Mapa ---------- */
 function vMapa(v){
   if (!mapSubj || !D.subjects.some(s => s.id === mapSubj)) mapSubj = D.subjects[0].id;
   v.append(h('div', {class:'subj-switch'}, D.subjects.map(s => h('button', {class:'seg', type:'button', style:scs(s.id), 'aria-pressed':String(mapSubj === s.id), onclick:() => { mapSubj = s.id; render(); }}, h('span', {class:'dot', style:'background:var(--sc)'}), s.name))));
@@ -399,6 +428,88 @@ function renderContent(txt){
 let lessonOpen = null, classSubj = 'todas';
 function openLesson(id){ if (!topic(id)) return; lessonOpen = id; P.lastLesson = id; save(); closeDrawer(); go('clases'); }
 const hasLesson = t => !!(t.content && t.content.trim());
+
+/* ---------- Clases guardadas en este dispositivo (paquete de clases) ----------
+   Las clases interactivas (HTML) viven en IndexedDB «calculai-clases», no en D:
+   así pesan poco en el guardado normal y la revisión de WebC nunca las toca.
+   La clave de cada clase es el enlace del tema o recurso (t.url / r.url).
+   Se muestran en un iframe aislado (sandbox sin allow-same-origin): no pueden leer los datos de Calculai.
+   Lo que la clase guarda en «localStorage» (respuestas, avance) se redirige a calculai-lstate. */
+const LDB = 'calculai-clases';
+let lessonKeys = new Set();
+const lessonHtmlCache = {};
+function ldbOpen(){ return new Promise((res, rej) => { const r = indexedDB.open(LDB, 1); r.onupgradeneeded = () => r.result.createObjectStore('l'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); }
+async function ldbPut(list){
+  const db = await ldbOpen();
+  await new Promise((res, rej) => { const tx = db.transaction('l', 'readwrite'); list.forEach(x => tx.objectStore('l').put({key:x.key, code:x.code || '', title:x.title || '', html:x.html, at:new Date().toISOString()}, x.key)); tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
+  list.forEach(x => { lessonKeys.add(x.key); lessonHtmlCache[x.key] = x.html; });
+}
+async function ldbGet(key){
+  if (lessonHtmlCache[key]) return lessonHtmlCache[key];
+  try { const db = await ldbOpen(); return await new Promise(res => { const r = db.transaction('l').objectStore('l').get(key); r.onsuccess = () => { const v = r.result && r.result.html || null; if (v) lessonHtmlCache[key] = v; res(v); }; r.onerror = () => res(null); }); } catch { return null; }
+}
+async function ldbClear(){ try { const db = await ldbOpen(); await new Promise(res => { const tx = db.transaction('l', 'readwrite'); tx.objectStore('l').clear(); tx.oncomplete = res; tx.onerror = res; }); } catch {} lessonKeys = new Set(); for (const k in lessonHtmlCache) delete lessonHtmlCache[k]; }
+async function loadLessonKeys(){
+  try { const db = await ldbOpen(); const keys = await new Promise(res => { const r = db.transaction('l').objectStore('l').getAllKeys(); r.onsuccess = () => res(r.result || []); r.onerror = () => res([]); }); lessonKeys = new Set(keys); if (keys.length) render(); } catch {}
+}
+const hasSaved = t => !!(t && t.url && lessonKeys.has(t.url));
+const lessonReady = t => hasLesson(t) || hasSaved(t);
+/* Texto plano de una clase guardada (para la IA). Usa la copia en memoria (se carga al abrir la clase). */
+function savedText(t){ const html = t && t.url && lessonHtmlCache[t.url]; if (!html) return ''; const d = new DOMParser().parseFromString(html, 'text/html'); d.querySelectorAll('script,style,noscript,svg').forEach(x => x.remove()); return (d.body.innerText || d.body.textContent || '').replace(/\n{3,}/g, '\n\n').trim().slice(0, 14000); }
+/* Avance que cada clase guarda (su «localStorage»), por enlace de la clase. */
+function lstateAll(){ try { return JSON.parse(localStorage.getItem('calculai-lstate') || '{}') || {}; } catch { return {}; } }
+function lstateSet(key, state){ const all = lstateAll(); all[key] = state; try { localStorage.setItem('calculai-lstate', JSON.stringify(all)); } catch {} }
+/* Script que se antepone a la clase: reemplaza localStorage por una copia que avisa a Calculai cada cambio. */
+function lessonShim(key){
+  const j = v => JSON.stringify(v).replace(/</g, '\\u003c');
+  return `<script>(function(){var K=${j(key)},S=${j(lstateAll()[key] || {})};function send(){try{parent.postMessage({type:'calculai-lstate',key:K,state:S},'*')}catch(e){}}var st={getItem:function(k){k=String(k);return Object.prototype.hasOwnProperty.call(S,k)?S[k]:null},setItem:function(k,v){S[String(k)]=String(v);send()},removeItem:function(k){delete S[String(k)];send()},clear:function(){S={};send()},key:function(i){return Object.keys(S)[i]||null},get length(){return Object.keys(S).length}};try{Object.defineProperty(window,'localStorage',{value:st,configurable:true})}catch(e){}})();<\/script>`;
+}
+function withShim(html, key){ const m = html.match(/<head[^>]*>/i); return m ? html.replace(m[0], m[0] + lessonShim(key)) : lessonShim(key) + html; }
+window.addEventListener('message', ev => {
+  const d = ev.data; if (!d || d.type !== 'calculai-lstate' || typeof d.key !== 'string' || !d.state || typeof d.state !== 'object') return;
+  const fr = [...document.querySelectorAll('iframe.saved-frame')].find(f => f.contentWindow === ev.source && f.dataset.key === d.key);
+  if (!fr || JSON.stringify(d.state).length > 300000) return;
+  const prev = lstateAll()[d.key] || {};
+  lstateSet(d.key, d.state);
+  /* Si en la clase marcas «Mi estado», el tema de Calculai queda con el mismo estado. */
+  for (const k of Object.keys(d.state)){
+    if (!/-status$/.test(k) || d.state[k] === prev[k]) continue;
+    let v = String(d.state[k]); try { v = JSON.parse(v); } catch {}
+    const s = norm(String(v)).replace('necesita ', '');
+    const t = D.topics.find(x => x.url === d.key);
+    if (t && W[s] !== undefined && st(t.id) !== s){
+      setStatus(t.id, s);
+      document.querySelectorAll('.lp-top .chip').forEach(c => { if (Object.values(SL).includes(c.textContent)) c.replaceChildren(h('i', {class:'dot', style:`background:var(--s-${s})`}), SL[s]); });
+      toast(`${t.title}: ${SL[s]}`);
+    }
+  }
+});
+/* Muestra una clase guardada dentro de Calculai, en un marco aislado. */
+function savedFrame(url, title){
+  const wrap = h('div', {class:'saved-lesson'});
+  const frame = h('iframe', {class:'saved-frame', title:title || 'Clase', sandbox:'allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms', 'data-key':url});
+  const bar = h('div', {class:'saved-bar tiny muted'},
+    h('span', null, '▤ Clase interactiva · guardada en este dispositivo'),
+    h('span', {class:'saved-act'},
+      h('button', {class:'linkbtn', type:'button', onclick:() => { try { (wrap.requestFullscreen || wrap.webkitRequestFullscreen).call(wrap); } catch {} }}, '⤢ Pantalla completa')));
+  wrap.append(bar, frame);
+  ldbGet(url).then(html => { if (html) frame.srcdoc = withShim(html, url); else frame.replaceWith(h('p', {class:'tiny muted'}, 'No encontré esta clase en este dispositivo. Vuelve a cargar el paquete de clases en Editar → Respaldo.')); });
+  return wrap;
+}
+function openSaved(url, title){
+  $('#drawer').classList.add('wide');
+  openDrawer(h('div', {class:'drawer-head'}, h('div', {style:'flex:1;min-width:0'}, h('h3', null, title || 'Material')), h('button', {class:'iconbtn', type:'button', 'aria-label':'Cerrar', onclick:closeDrawer}, '✕')),
+    h('div', {class:'drawer-body'}, savedFrame(url, title)));
+}
+/* Abre un recurso: guardado → dentro de Calculai; Drive/YouTube/PDF → visor; lo demás → pestaña aparte. */
+function openResource(url, title){ if (!url) return; if (lessonKeys.has(url)) openSaved(url, title); else if (embedUrl(url)) openViewer(url, title); else window.open(url, '_blank', 'noopener'); }
+/* Importa un paquete de clases: {app:'calculai', lessons:[{key, code, title, html}], data?, progress?}. */
+async function importLessons(list){
+  const ok = (list || []).filter(x => x && typeof x.key === 'string' && /^https?:\/\//.test(x.key) && typeof x.html === 'string' && x.html.length < 3e6);
+  if (!ok.length) return 0;
+  await ldbPut(ok); return ok.length;
+}
+const isExampleData = () => D.subjects.length > 0 && D.subjects.every(s => /^s-(cal|alg|fis)$/.test(s.id));
 const readMin = t => Math.max(1, Math.round(String(t.content || '').split(/\s+/).length / 180));
 function lessonOrder(sid){ const memo = {}; return topicsOf(sid).slice().sort((a, b) => depthOf(a, memo) - depthOf(b, memo) || (a.code || a.title).localeCompare(b.code || b.title, 'es', {numeric:true})); }
 /* Enlaces que sí se pueden mostrar dentro de la app (Drive, Docs, YouTube, PDF). */
@@ -438,12 +549,13 @@ function openViewer(url, title){
 }
 /* Tarjeta compacta de la clase (panel lateral del mapa). */
 function lessonCard(t){
-  const has = hasLesson(t);
+  const has = hasLesson(t), saved = hasSaved(t);
+  if (saved) ldbGet(t.url); // deja el texto listo para «Adaptar con IA»
   return h('div', {class:'lesson-card'},
-    h('div', {class:'lc-info'}, h('b', null, has ? '▤ Clase lista para leer' : t.url ? '◫ Material del curso' : '▤ Clase sin escribir'),
-      h('small', {class:'muted'}, has ? `${readMin(t)} min de lectura · dentro de Calculai` : t.url ? (embedUrl(t.url) ? 'Se ve dentro de Calculai' : 'Se abre aparte') : 'Puedes escribirla o pegar una clase preparada')),
+    h('div', {class:'lc-info'}, h('b', null, saved ? '▤ Clase interactiva lista' : has ? '▤ Clase lista para leer' : t.url ? '◫ Material del curso' : '▤ Clase sin escribir'),
+      h('small', {class:'muted'}, saved ? 'Guardada en este dispositivo · se ve dentro de Calculai' : has ? `${readMin(t)} min de lectura · dentro de Calculai` : t.url ? (embedUrl(t.url) ? 'Se ve dentro de Calculai' : 'Se abre aparte') : 'Puedes escribirla o pegar una clase preparada')),
     h('div', {class:'ai-row'},
-      h('button', {class:'btn small hlbtn', type:'button', onclick:() => openLesson(t.id)}, has || t.url ? 'Abrir clase' : 'Ir a la clase'),
+      h('button', {class:'btn small hlbtn', type:'button', onclick:() => openLesson(t.id)}, has || saved || t.url ? 'Abrir clase' : 'Ir a la clase'),
       h('button', {class:'btn small ai-btn', type:'button', onclick:() => openAIPanel(t)}, '✦ Adaptar con IA')));
 }
 function vClases(v){
@@ -457,6 +569,11 @@ function vClases(v){
     last ? h('button', {class:'card cl-cont', type:'button', style:scs(last.subj), onclick:() => openLesson(last.id)}, h('small', {class:'kicker'}, 'Continuar donde quedaste'), h('b', null, last.title), h('span', {class:'tiny muted'}, S(last.subj).name)) : null,
     top && (!last || top.t.id !== last.id) ? h('button', {class:'card cl-cont', type:'button', style:scs(top.t.subj), onclick:() => openLesson(top.t.id)}, h('small', {class:'kicker'}, 'Sugerida para ahora'), h('b', null, top.t.title), h('span', {class:'tiny muted'}, top.why[0])) : null);
   if (quick.children.length) v.append(quick);
+  const missing = D.topics.filter(x => !lessonReady(x) && /^https:\/\/claude\.ai\//.test(x.url || '')).length;
+  if (missing) v.append(h('div', {class:'card lp-empty', style:'margin-top:12px'},
+    h('p', {style:'margin:0 0 4px'}, h('b', null, `${plural(missing, 'clase tuya está', 'clases tuyas están')} en claude.ai y todavía no ${missing === 1 ? 'está guardada' : 'están guardadas'} en este dispositivo.`)),
+    h('p', {class:'tiny muted', style:'margin:0 0 8px'}, 'Carga tu paquete de clases (archivo .json) para leerlas dentro de Calculai, aunque WebC no esté conectado.'),
+    h('button', {class:'btn small', type:'button', onclick:pickLessonFile}, '⇪ Cargar paquete de clases')));
   const search = h('input', {type:'search', class:'cl-search', placeholder:'Buscar una clase (título, código o texto)…', 'aria-label':'Buscar clase'});
   v.append(h('div', {class:'filterrow', style:'margin-top:12px'},
     h('button', {class:'seg', type:'button', 'aria-pressed':String(classSubj === 'todas'), onclick:() => { classSubj = 'todas'; render(); }}, 'Todas'),
@@ -464,16 +581,16 @@ function vClases(v){
   const groups = [];
   D.subjects.filter(s => classSubj === 'todas' || classSubj === s.id).forEach(s => {
     const ts = lessonOrder(s.id);
-    const nw = ts.filter(hasLesson).length;
+    const nw = ts.filter(lessonReady).length;
     const grid = h('div', {class:'cl-grid'}, ts.map(x => {
       const stt = st(x.id), ex = examFor(x);
       const card = h('button', {class:'cl-card', type:'button', style:scs(s.id), onclick:() => openLesson(x.id), 'data-q':norm([x.code, x.title, x.content].join(' '))},
-        h('span', {class:'cl-top'}, x.code ? h('span', {class:'chip mono'}, x.code) : null, h('span', {class:'cl-kind ' + (hasLesson(x) ? 'ok' : x.url ? 'mat' : 'none')}, hasLesson(x) ? `▤ ${readMin(x)} min` : x.url ? '◫ material' : 'sin clase')),
+        h('span', {class:'cl-top'}, x.code ? h('span', {class:'chip mono'}, x.code) : null, h('span', {class:'cl-kind ' + (lessonReady(x) ? 'ok' : x.url ? 'mat' : 'none')}, hasSaved(x) ? '▤ clase' : hasLesson(x) ? `▤ ${readMin(x)} min` : x.url ? '◫ enlace' : 'sin clase')),
         h('b', {class:'cl-title'}, x.title),
         h('span', {class:'cl-foot tiny'}, h('i', {class:'dot', style:`background:var(--s-${stt})`}), SL[stt], ex ? ` · ${ex.name} ${countdown(diffDays(TODAY, parse(ex.date)))}` : ''));
       return card;
     }));
-    const sec = h('section', {class:'cl-sec'}, h('div', {class:'cl-sh'}, h('h3', {class:'display'}, s.name), h('span', {class:'tiny muted'}, `${nw} de ${ts.length} clases escritas`),
+    const sec = h('section', {class:'cl-sec'}, h('div', {class:'cl-sh'}, h('h3', {class:'display'}, s.name), h('span', {class:'tiny muted'}, `${nw} de ${ts.length} clases disponibles aquí`),
       h('button', {class:'btn ghost small', type:'button', onclick:() => openTopicForm(null, s.id)}, '+ Clase')),
       ts.length ? grid : h('p', {class:'tiny muted'}, 'Esta materia todavía no tiene temas. Agrega uno con «+ Clase».'));
     groups.push(sec); v.append(sec);
@@ -499,18 +616,20 @@ function vLesson(v, t){
     ex ? h('p', {class:'tiny muted', style:'margin:-4px 0 10px'}, `Entra en ${S(ex.subj).short} · ${ex.name}, ${countdown(diffDays(TODAY, parse(ex.date)))} (${fmtD(parse(ex.date))}).`) : null,
     h('div', {class:'lp-actions'},
       h('button', {class:'btn small ai-btn', type:'button', onclick:() => openAIPanel(t, page)}, '✦ Adaptar con IA'),
-      h('button', {class:'btn ghost small', type:'button', onclick:() => openTopicForm(t.id)}, hasLesson(t) ? '✎ Editar clase' : '✎ Escribir clase'),
+      h('button', {class:'btn ghost small', type:'button', onclick:() => openTopicForm(t.id)}, hasLesson(t) ? '✎ Editar mi texto' : hasSaved(t) ? '✎ Agregar mis notas' : '✎ Escribir clase'),
       nItems ? h('button', {class:'btn ghost small', type:'button', onclick:() => { pracFilter = t.id; Q = null; go('practica'); }}, `Practicar (${nItems})`) : null,
       h('button', {class:'btn ghost small', type:'button', onclick:() => startFocus(t, buildSession(t))}, '▶ Sesión de estudio')),
     h('div', {class:'ai-slot'})].filter(Boolean));
-  const body = h('article', {class:'card lp-body'});
-  if (hasLesson(t)) body.append(renderContent(t.content));
-  else body.append(h('div', {class:'lp-empty'},
-    h('p', {style:'margin:0 0 6px'}, h('b', null, 'Esta clase todavía no tiene texto en Calculai.')),
-    h('p', {class:'tiny muted', style:'margin:0 0 10px'}, t.url ? 'Abajo tienes el material del curso. Puedes escribir la clase o pegar una ya preparada con «Escribir clase».' : 'Escríbela o pega una clase preparada con «Escribir clase». Usa # para títulos y $…$ para fórmulas.'),
-    h('button', {class:'btn small', type:'button', onclick:() => openTopicForm(t.id)}, '✎ Escribir clase')));
-  page.append(body);
-  if (t.url) page.append(hasLesson(t)
+  const saved = hasSaved(t), fromClaude = /^https:\/\/claude\.ai\//.test(t.url || '');
+  if (saved) ldbGet(t.url);
+  if (hasLesson(t)) page.append(h('article', {class:'card lp-body'}, saved ? h('p', {class:'kicker', style:'margin:0 0 8px'}, 'Mi texto (notas o versión adaptada)') : null, renderContent(t.content)));
+  if (saved) page.append(h('article', {class:'card lp-body lp-saved'}, savedFrame(t.url, t.title)));
+  if (!hasLesson(t) && !saved) page.append(h('article', {class:'card lp-body'}, h('div', {class:'lp-empty'},
+    h('p', {style:'margin:0 0 6px'}, h('b', null, fromClaude ? 'Esta clase está en claude.ai y todavía no está guardada en este dispositivo.' : 'Esta clase todavía no tiene texto en Calculai.')),
+    h('p', {class:'tiny muted', style:'margin:0 0 10px'}, fromClaude ? 'Carga tu paquete de clases para leerla aquí mismo, sin depender de WebC ni de otra página.' : t.url ? 'Abajo tienes el material del curso. Puedes escribir la clase o pegar una ya preparada con «Escribir clase».' : 'Escríbela o pega una clase preparada con «Escribir clase». Usa # para títulos y $…$ para fórmulas.'),
+    h('div', {class:'ai-row'}, fromClaude ? h('button', {class:'btn small', type:'button', onclick:pickLessonFile}, '⇪ Cargar paquete de clases') : null,
+      h('button', {class:fromClaude ? 'btn ghost small' : 'btn small', type:'button', onclick:() => openTopicForm(t.id)}, '✎ Escribir clase')))));
+  if (t.url && !saved) page.append(hasLesson(t)
     ? h('details', {class:'card lp-mat'}, h('summary', null, '◫ Material del curso'), viewer(t.url, t.title))
     : h('section', {class:'card lp-mat'}, h('h4', {style:'margin:0 0 8px'}, '◫ Material del curso'), viewer(t.url, t.title)));
   page.append(
@@ -543,7 +662,7 @@ const setAIModel = m => lsSet('calculai-ai-model', m);
 
 function aiPrompt(mode, t, need){
   const base = mode ? mode.prompt : 'Adapta esta clase según lo que pide el estudiante.';
-  return `${base}${need ? `\n\nLo que me cuesta o necesito: ${need}` : ''}\n\nReglas: responde en español; usa solo el contenido de la clase (si agregas algo que no está en ella, márcalo como «Complemento»); usa $…$ para fórmulas en línea y $$…$$ en bloques; usa # y ## para títulos.\n\n---\nClase «${t.title}»:\n\n${t.content || '(La clase no tiene texto escrito en Calculai.' + (t.url ? ' Material: ' + t.url : '') + ')'}`;
+  return `${base}${need ? `\n\nLo que me cuesta o necesito: ${need}` : ''}\n\nReglas: responde en español; usa solo el contenido de la clase (si agregas algo que no está en ella, márcalo como «Complemento»); usa $…$ para fórmulas en línea y $$…$$ en bloques; usa # y ## para títulos.\n\n---\nClase «${t.title}»:\n\n${t.content || savedText(t) || '(La clase no tiene texto escrito en Calculai.' + (t.url ? ' Material: ' + t.url : '') + ')'}`;
 }
 async function callAI(prompt){
   const key = getAIKey(), provider = getAIProvider(), model = getAIModel();
@@ -658,6 +777,7 @@ function pickItem(f, exclude){
 function newQ(item){ Q = item ? {item, order:item.type === 'mc' ? item.opts.map((_, k) => k).sort(() => Math.random() - .5) : null, choice:null, conf:null, checked:false, ok:null, val:''} : null; }
 function parseNum(s){ s = String(s).trim().replace(/\s/g, '').replace(',', '.'); const f = s.match(/^(-?\d+(?:\.\d+)?)\/(-?\d+(?:\.\d+)?)$/); if (f){ const b = +f[2]; return b ? +f[1] / b : null; } const n = Number(s); return Number.isFinite(n) && s !== '' ? n : null; }
 const fmtNum = n => String(Math.round(n * 1e6) / 1e6).replace('.', ',');
+/* ---------- Vista: Práctica ---------- */
 function vPractica(v){
   const isTopic = pracFilter !== 'todo' && !D.subjects.some(s => s.id === pracFilter);
   if (isTopic && !topic(pracFilter)) pracFilter = 'todo';
@@ -748,6 +868,7 @@ function calibMsg(A){
 /* ---------------- ERRORES ---------------- */
 const CAUSES = [['','¿Por qué fallé?'],['concepto','No entendía el concepto'],['procedimiento','Elegí mal el procedimiento'],['algebra','Error de álgebra o aritmética'],['lectura','Leí mal el enunciado'],['descuido','Descuido (signo, unidad)']];
 let errFilter = 'abiertos';
+/* ---------- Vista: Errores ---------- */
 function vErrores(v){
   v.append(h('div', {class:'sec-title'}, h('h2', null, 'Banco de errores'), h('span', {class:'hand'}, 'cada error es un ejercicio gratis')));
   v.append(h('div', {class:'filterrow', style:'margin-top:0'}, [['abiertos','Por resolver'],['peligrosos','Peligrosos'],['resueltos','Resueltos']].map(([k, l]) => h('button', {class:'seg', type:'button', 'aria-pressed':String(errFilter === k), onclick:() => { errFilter = k; render(); }}, l))));
@@ -791,6 +912,7 @@ function eventRow(e, compact){
       e.note ? h('div', {class:'tiny note', style:'margin:4px 0 0'}, e.note) : null,
       compact ? null : h('button', {class:'btn ghost small', type:'button', style:'margin-top:6px', onclick:() => openEventForm(e.id)}, 'Editar')));
 }
+/* ---------- Vista: Calendario ---------- */
 function vCal(v){
   v.append(h('div', {class:'sec-title'}, h('h2', null, 'Calendario'), h('span', {class:'hand'}, '✓ = fecha confirmada en una fuente oficial')));
   v.append(h('div', {class:'calbar-top'},
@@ -962,6 +1084,7 @@ const LIBRARY = [
   {area:'Física', t:'Crowell, Light and Matter', lic:'CC BY-SA 3.0', ai:'ok', n:'Serie completa de física introductoria.', u:'https://www.lightandmatter.com/'},
   {area:'Física', t:'MIT OCW 8.01SC Classical Mechanics', lic:'CC BY-NC-SA 4.0', ai:'cond', n:'Videos y notas por semana (Dourmashkin).', u:'https://ocw.mit.edu/courses/8-01sc-classical-mechanics-fall-2016/'}
 ];
+/* ---------- Vista: Biblioteca ---------- */
 function vBiblio(v){
   const news = (D.news || []).slice().sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   if (news.length){
@@ -976,7 +1099,7 @@ function vBiblio(v){
     if (!ts.length && !rs.length){ v.append(h('p', {class:'tiny muted'}, 'Sin enlaces todavía. Agrega el enlace del material en cada tema, o recursos en Editar.')); return; }
     v.append(h('div', {class:'mine'},
       ts.sort((a, b) => (a.code || a.title).localeCompare(b.code || b.title)).map(t => h('button', {class:'res', type:'button', style:scs(s.id), onclick:() => openLesson(t.id)}, h('i', {class:'dot', style:`background:var(--s-${st(t.id)})`}), h('span', null, h('b', null, (t.code ? t.code + ' · ' : '') + t.title), h('small', null, SCOPE_LBL[t.scope] || 'Tema')))),
-      rs.map(r => h('button', {class:'res', type:'button', style:scs(s.id), onclick:() => r.url && embedUrl(r.url) ? openViewer(r.url, r.title) : r.url ? window.open(r.url, '_blank', 'noopener') : null}, h('span', {style:'font-size:1.1rem'}, '◆'), h('span', null, h('b', null, r.title), h('small', null, (r.kind || 'Recurso') + (r.url && !embedUrl(r.url) ? ' · se abre aparte ↗' : '')))))));
+      rs.map(r => h('button', {class:'res', type:'button', style:scs(s.id), onclick:() => openResource(r.url, r.title)}, h('span', {style:'font-size:1.1rem'}, '◆'), h('span', null, h('b', null, r.title), h('small', null, (r.kind || 'Recurso') + (r.url && lessonKeys.has(r.url) ? ' · se ve aquí' : r.url && !embedUrl(r.url) ? ' · se abre aparte ↗' : '')))))));
   });
   v.append(h('div', {class:'sec-title'}, h('h2', null, 'Libros abiertos para complementar'), h('span', {class:'hand'}, 'gratis y con licencia abierta')));
   v.append(h('p', {class:'muted tiny'}, 'Licencias revisadas en octubre de 2026. «IA» indica si la fuente oficial pone restricciones a usarlos con inteligencia artificial.'));
@@ -1140,7 +1263,12 @@ function vEditar(v){
       h('button', {class:'btn ghost small', type:'button', onclick:() => file.click()}, '⇪ Abrir archivo'), file,
       h('button', {class:'btn ghost small', type:'button', onclick:shareToDevice, title:'Envía tu respaldo al celular u otro equipo'}, '📱 Pasar a otro dispositivo'),
       h('button', {class:'btn danger small', type:'button', onclick:() => { if (confirm('¿Borrar todos los datos de este navegador? Descarga antes un respaldo si los quieres.')){ D = blankData(); P = blankProg(); save(); tab = 'ahora'; render(); } }}, 'Borrar todo')),
-    h('p', {class:'tiny muted', style:'margin:10px 0 0'}, 'La plantilla no incluye tu progreso: sirve para que alguien de tu curso parta con las mismas materias, fechas y ejercicios.')));
+    h('p', {class:'tiny muted', style:'margin:10px 0 0'}, 'La plantilla no incluye tu progreso: sirve para que alguien de tu curso parta con las mismas materias, fechas y ejercicios.'),
+    h('div', {class:'ai-row', style:'margin-top:12px;align-items:center'},
+      h('span', {class:'tiny'}, h('b', null, '▤ Clases guardadas en este dispositivo: '), String(lessonKeys.size)),
+      h('button', {class:'btn ghost small', type:'button', onclick:pickLessonFile}, '⇪ Cargar paquete de clases'),
+      lessonKeys.size ? h('button', {class:'btn ghost small', type:'button', onclick:async () => { if (confirm('¿Quitar las clases guardadas en este dispositivo? Tus materias y tu progreso no cambian.')){ await ldbClear(); render(); toast('Clases quitadas de este dispositivo'); } }}, 'Quitar clases') : null),
+    h('p', {class:'tiny muted', style:'margin:6px 0 0'}, 'Las clases se guardan aparte de tus datos: la revisión de WebC, los respaldos y la IA nunca las borran. En otro equipo, vuelve a cargar el paquete.')));
 }
 function importFile(f, fromWelcome){
   if (!f) return;
@@ -1149,6 +1277,7 @@ function importFile(f, fromWelcome){
     try {
       const j = JSON.parse(r.result);
       if (j && j.type === 'calculai-webc' && Array.isArray(j.courses)){ receiveWebc(j); return; }
+      if (j && Array.isArray(j.lessons)){ importPack(j, fromWelcome); return; }
       if (!j || !j.data || !Array.isArray(j.data.subjects)) throw new Error('formato');
       const nd = normData(j.data);
       if (!fromWelcome && D.subjects.length && !confirm(j.progress ? 'Esto reemplaza tus datos y tu progreso actuales por los del archivo. ¿Continuar?' : 'Esto reemplaza tus materias, fechas, temas y ejercicios por los de la plantilla (tu progreso se mantiene en los temas que coincidan). ¿Continuar?')) return;
@@ -1157,6 +1286,24 @@ function importFile(f, fromWelcome){
     } catch { toast('El archivo no es un respaldo ni una plantilla de Calculai'); }
   };
   r.readAsText(f);
+}
+/* Paquete de clases: guarda las clases en este dispositivo y, si trae datos, ofrece cargarlos.
+   Con datos de ejemplo (o sin datos) los carga directo; si ya tienes tus datos, pregunta. */
+async function importPack(j, fromWelcome){
+  const n = await importLessons(j.lessons).catch(() => -1);
+  if (n < 0){ toast('No pude guardar las clases en este navegador (¿modo incógnito o sin espacio?)', 5000); return; }
+  let loaded = false;
+  if (j.data && Array.isArray(j.data.subjects)){
+    const replace = fromWelcome || !D.subjects.length || isExampleData() || confirm('El paquete trae también materias, fechas y temas.\n\nAceptar: reemplazar tus datos actuales por los del paquete (tu progreso se mantiene).\nCancelar: guardar solo las clases y dejar tus datos como están.');
+    if (replace){ D = normData(j.data); if (j.progress) P = normProg(j.progress); loaded = true; }
+  }
+  save(); tab = loaded ? 'clases' : tab; lessonOpen = null; render();
+  toast(`${plural(n, 'clase guardada', 'clases guardadas')} en este dispositivo${loaded ? ' · tus materias quedaron cargadas' : ''}`, 6000);
+}
+let lessonFileInput = null;
+function pickLessonFile(){
+  if (!lessonFileInput){ lessonFileInput = h('input', {type:'file', accept:'.json,application/json', style:'display:none', onchange:e => { importFile(e.target.files[0], false); e.target.value = ''; }}); document.body.append(lessonFileInput); }
+  lessonFileInput.click();
 }
 
 /* =========================================================
@@ -1168,7 +1315,7 @@ function tick(){ if (!F || !F.running || F.end) return; F.left = Math.max(0, F.l
 function nextStep(){ if (F.idx < F.steps.length - 1){ F.idx++; F.left = F.steps[F.idx].min * 60; F.running = true; } else F.end = true; renderFocus(); }
 function toggleFocusLesson(){
   const box = $('#focusLesson'); if (!box || !F) return;
-  if (box.hidden){ const t = topic(F.t.id) || F.t; box.replaceChildren(h('div', {class:'focus-lesson-in card', style:scs(t.subj)}, h('div', {class:'ai-row', style:'justify-content:space-between'}, h('b', {class:'display'}, '▤ ' + t.title), h('button', {class:'btn ghost small', type:'button', onclick:toggleFocusLesson}, 'Ocultar clase')), hasLesson(t) ? renderContent(t.content) : h('p', {class:'tiny muted'}, 'Esta clase aún no tiene texto en Calculai.'), t.url ? viewer(t.url, t.title) : null)); box.hidden = false; box.scrollIntoView({behavior:'smooth', block:'start'}); }
+  if (box.hidden){ const t = topic(F.t.id) || F.t; box.replaceChildren(h('div', {class:'focus-lesson-in card', style:scs(t.subj)}, h('div', {class:'ai-row', style:'justify-content:space-between'}, h('b', {class:'display'}, '▤ ' + t.title), h('button', {class:'btn ghost small', type:'button', onclick:toggleFocusLesson}, 'Ocultar clase')), hasLesson(t) ? renderContent(t.content) : null, hasSaved(t) ? savedFrame(t.url, t.title) : !hasLesson(t) ? h('p', {class:'tiny muted'}, 'Esta clase aún no tiene texto en Calculai.') : null, t.url && !hasSaved(t) ? viewer(t.url, t.title) : null)); box.hidden = false; box.scrollIntoView({behavior:'smooth', block:'start'}); }
   else { box.hidden = true; box.replaceChildren(); }
   renderFocus();
 }
@@ -1307,7 +1454,7 @@ window.addEventListener('message', ev => {
   const d = ev.data; if (!d || typeof d !== 'object') return;
   if (d.type === 'calculai-ping' && ev.source){ try { ev.source.postMessage({type:'calculai-ready'}, ev.origin); } catch {} return; }
   if (d.type === 'calculai-webc' && Array.isArray(d.courses)){
-    if (d.auto){ if (ev.source === window && ev.origin === location.origin) applyAutoWebc(d); return; }
+    if (d.auto){ if (ev.source === window && ev.origin === location.origin) applyAutoWebc(resolveKnownNews(d)); return; }
     try { ev.source && ev.source.postMessage({type:'calculai-received'}, ev.origin); } catch {}
     d.origin = d.origin || ev.origin; receiveWebc(d);
   }
@@ -1440,18 +1587,35 @@ function applyWebc(){
 const SYNC = {agent:null, agentWhy:'', webc:'idle', webcMsg:'', outlook:'idle', outlookMsg:'', lastPayload:null};
 const STALE_MIN = 15;
 const USERSCRIPT_URL = APP_BASE + 'calculai-sync.user.js';
+const SCRIPT_V = '1.1.0'; // versión publicada de calculai-sync.user.js (súbela junto con @version del script)
+const verLt = (a, b) => { const x = a.split('.').map(Number), y = b.split('.').map(Number); for (let i = 0; i < 3; i++){ if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) < (y[i] || 0); } return false; };
 function syncData(){ D.sync = D.sync || {}; for (const k of ['inbox', 'dismissed', 'ignoredCourses']) if (!Array.isArray(D.sync[k])) D.sync[k] = []; return D.sync; }
 const minsSince = s => s ? (Date.now() - new Date(s).getTime()) / 60000 : Infinity;
 function agoMin(s){ const m = minsSince(s); if (!isFinite(m)) return 'nunca'; if (m < 1) return 'recién'; if (m < 60) return `hace ${Math.round(m)} min`; if (m < 1440) return `hace ${Math.round(m / 60)} h`; return `hace ${Math.round(m / 1440)} d`; }
 const webcBase = () => (D.sync && D.sync.webc && D.sync.webc.origin) || 'https://webc.uai.cl';
 
-function requestWebcSync(force){
+function requestWebcSync(force, extraCourses = []){
   if (!SYNC.agent || !D.subjects.length) return false;
-  if (!force && (SYNC.webc === 'checking' || SYNC.webc === 'reading' || minsSince(D.sync && D.sync.webc && D.sync.webc.at) < STALE_MIN)) return false;
-  SYNC.webc = 'checking'; SYNC.webcMsg = ''; paintSync();
-  window.postMessage({type:'calculai-sync-request', base:webcBase(), courses:D.subjects.map(s => s.webc).filter(Boolean)}, location.origin);
-  clearTimeout(SYNC._t); SYNC._t = setTimeout(() => { if (SYNC.webc === 'checking' || SYNC.webc === 'reading'){ SYNC.webc = 'error'; SYNC.webcMsg = 'WebC no respondió a tiempo'; paintSync(); } }, 180000);
+  if (SYNC.webc === 'checking' || SYNC.webc === 'reading') return false;
+  if (!force && minsSince(D.sync && D.sync.webc && D.sync.webc.at) < STALE_MIN) return false;
+  SYNC.webc = 'checking'; SYNC.webcMsg = ''; SYNC.startAt = Date.now(); paintSync();
+  /* known: avisos que ya están guardados, por curso de WebC; el script (v1.1+) no los vuelve a abrir. */
+  const known = {};
+  D.subjects.forEach(s => { if (!s.webc) return; known[s.webc] = (D.news || []).filter(n => n.subj === s.id && n.src === 'webc' && /^n-/.test(n.id)).map(n => n.id.slice(2)); });
+  window.postMessage({type:'calculai-sync-request', base:webcBase(), courses:D.subjects.map(s => s.webc).filter(Boolean).concat(extraCourses), codes:D.subjects.map(s => s.code).filter(Boolean), known}, location.origin);
+  clearTimeout(SYNC._t); SYNC._t = setTimeout(() => { if (SYNC.webc === 'checking' || SYNC.webc === 'reading'){ SYNC.webc = 'error'; SYNC.webcMsg = 'WebC no respondió a tiempo'; paintSync(); } }, 150000);
   return true;
+}
+/* Los avisos que el script marca como ya conocidos (known:true) llegan sin texto: se completan con lo guardado. */
+function resolveKnownNews(d){
+  (d.courses || []).forEach(c => {
+    c.news = (c.news || []).map(n => {
+      if (!n.known) return n;
+      const ex = (D.news || []).find(x => x.id === 'n-' + n.id);
+      return ex ? {id:n.id, title:ex.title || n.title, url:ex.url || n.url, author:ex.author || '', date:ex.date || null, text:ex.text || '', known:true} : null;
+    }).filter(Boolean);
+  });
+  return d;
 }
 function addToInbox(x){
   const sd = syncData();
@@ -1467,30 +1631,52 @@ function applyAutoWebc(d){
   const W2 = prepareWebc(d), sd = syncData();
   const known = new Set((D.news || []).map(n => n.id));
   let nE = 0, nU = 0, nR = 0, nN = 0, nS = 0;
-  const fresh = [];
+  const fresh = [], items = []; // items: lo nuevo de esta revisión, para la tarjeta «Novedades»
   W2.courses.forEach(row => {
     const c = row.c, sid = row.target;
     if (sid === 'new'){ if (!sd.ignoredCourses.includes(c.id)) fresh.push({id:c.id, name:c.name, code:c.code}); return; }
     const s = D.subjects.find(x => x.id === sid); if (s){ s.webc = c.id; s.url = s.url || c.url; }
     row.evs.filter(e => e.sel && !sd.dismissed.includes(e.id)).forEach(e => {
       const ex = D.events.find(x => x.webc === e.id);
-      if (ex){ if (ex.date !== e.date || ex.time !== e.time){ ex.date = e.date; ex.time = e.time; ex.src = `WebC · calendario del curso (revisado ${fmtD(TODAY)})`; nU++; } }
-      else { D.events.push({id:uid('ev'), subj:sid, kind:e.kind, name:e.name, date:e.date, time:e.time, slot:'', ver:true, src:`WebC · calendario del curso (${fmtD(TODAY)})`, topics:[], scopeNote:'', note:'Agregada automáticamente desde el calendario de WebC.', webc:e.id, url:e.url}); nE++; }
+      if (ex){ if (ex.date !== e.date || ex.time !== e.time){ ex.date = e.date; ex.time = e.time; ex.src = `WebC · calendario del curso (revisado ${fmtD(TODAY)})`; nU++; items.push({k:'cambio', t:ex.name, subj:sid, date:e.date}); } }
+      else { D.events.push({id:uid('ev'), subj:sid, kind:e.kind, name:e.name, date:e.date, time:e.time, slot:'', ver:true, src:`WebC · calendario del curso (${fmtD(TODAY)})`, topics:[], scopeNote:'', note:'Agregada automáticamente desde el calendario de WebC.', webc:e.id, url:e.url}); nE++; items.push({k:'fecha', t:e.name, subj:sid, date:e.date}); }
     });
-    c.resources.forEach(r => { if (!D.resources.some(x => x.url === r.url)){ D.resources.push({id:uid('r'), subj:sid, title:r.name, kind:({resource:'Archivo', url:'Enlace', folder:'Carpeta', page:'Página', assign:'Tarea', quiz:'Cuestionario', book:'Libro'}[r.type] || 'Recurso') + (r.section ? ' · ' + r.section : ''), url:r.url, webc:true}); nR++; } });
+    c.resources.forEach(r => { if (!D.resources.some(x => x.url === r.url)){ D.resources.push({id:uid('r'), subj:sid, title:r.name, kind:({resource:'Archivo', url:'Enlace', folder:'Carpeta', page:'Página', assign:'Tarea', quiz:'Cuestionario', book:'Libro'}[r.type] || 'Recurso') + (r.section ? ' · ' + r.section : ''), url:r.url, webc:true}); nR++; items.push({k:'recurso', t:r.name, subj:sid, url:r.url}); } });
+    /* Avisos: se reemplazan los de WebC de esta materia por la lista recibida (los ya conocidos llegan completados
+       por resolveKnownNews). Nunca se tocan temas, clases, ejercicios ni progreso. */
     if (c.news.length){
       D.news = (D.news || []).filter(n => !(n.subj === sid && n.src !== 'outlook'));
-      c.news.forEach(n => { const id = 'n-' + n.id; const isNew = !known.has(id); if (isNew) nN++; D.news.push({id, subj:sid, title:n.title, url:n.url, author:n.author, date:newsDate(n), text:n.text, src:'webc', fresh:isNew || undefined}); });
+      c.news.forEach(n => { const id = 'n-' + n.id; const isNew = !known.has(id); if (isNew){ nN++; items.push({k:'aviso', t:n.title, subj:sid, id}); } D.news.push({id, subj:sid, title:n.title, url:n.url, author:n.author, date:newsDate(n), text:n.text, src:'webc', fresh:isNew || undefined}); });
     }
     row.sugg.forEach(x => { if (!x.dup && !x.calDup && x.kind !== 'otro' && addToInbox({...x, subj:sid, src:'webc'})) nS++; });
   });
   (d.unlinked || []).forEach(c => { if (!sd.ignoredCourses.includes(c.id) && !fresh.some(f => f.id === c.id)) fresh.push(c); });
   sd.newCourses = fresh;
-  sd.webc = {origin:W2.origin, at:W2.at, auto:true, last:{nE, nU, nR, nN, nS}};
+  sd.webc = {origin:W2.origin, at:W2.at, auto:true, partial:!!d.partial, last:{nE, nU, nR, nN, nS}};
+  if (nS) items.push({k:'revisar', t:plural(nS, 'fecha encontrada en avisos', 'fechas encontradas en avisos'), subj:''});
+  if (items.length){
+    const prev = sd.novedades && !sd.novedades.seen ? sd.novedades.items : [];
+    sd.novedades = {at:W2.at, seen:false, items:items.concat(prev).slice(0, 40)};
+  }
   SYNC.webc = 'ok'; SYNC.webcMsg = '';
   save(); render();
   const parts = [nE && plural(nE, 'fecha nueva', 'fechas nuevas'), nU && plural(nU, 'fecha cambiada', 'fechas cambiadas'), nN && plural(nN, 'aviso nuevo', 'avisos nuevos'), nR && plural(nR, 'recurso nuevo', 'recursos nuevos'), nS && plural(nS, 'fecha por revisar', 'fechas por revisar')].filter(Boolean);
-  toast(parts.length ? 'WebC: ' + parts.join(' · ') : 'WebC revisado: sin novedades');
+  toast(parts.length ? 'WebC: ' + parts.join(' · ') : 'WebC revisado: sin novedades', parts.length ? 6000 : 2400);
+  if (SYNC.addCourses){ const ids = SYNC.addCourses; SYNC.addCourses = null; const sub = {...d, courses:d.courses.filter(c => ids.includes(c.id))}; if (sub.courses.length) receiveWebc(sub); }
+}
+/* Tarjeta «Novedades» (Ahora): lo que trajo la última revisión de WebC, hasta que la marques como vista. */
+function novedadesCard(){
+  const nv = D.sync && D.sync.novedades;
+  if (!nv || nv.seen || !nv.items || !nv.items.length) return null;
+  const LBL = {fecha:'📅 Fecha nueva', cambio:'↻ Fecha cambiada', aviso:'📣 Aviso', recurso:'📎 Recurso', revisar:'🔎 Para revisar'};
+  const open = x => { if (x.k === 'aviso'){ go('biblio'); } else if (x.k === 'recurso'){ embedUrl(x.url) ? openViewer(x.url, x.t) : window.open(x.url, '_blank', 'noopener'); } else if (x.k === 'fecha' || x.k === 'cambio'){ go('cal'); } };
+  return h('section', {class:'card inbox novedades'},
+    h('div', {class:'ib-head'}, h('h3', null, `Novedades de WebC · ${nv.items.length}`), h('span', {class:'tiny muted'}, `Revisión ${agoMin(nv.at)}`),
+      h('button', {class:'btn ghost small', type:'button', onclick:() => { nv.seen = true; save(); render(); }}, 'Marcar como visto')),
+    h('div', {class:'wlist'}, nv.items.slice(0, 12).map(x => h('button', {class:'wrow nv-row', type:'button', style:x.subj ? scs(x.subj) : '', onclick:() => x.k === 'revisar' ? null : open(x)},
+      h('span', {class:'chip'}, LBL[x.k] || x.k), h('span', {class:'nv-t'}, x.t), x.subj ? h('small', {class:'muted'}, S(x.subj).short) : null,
+      x.date ? h('small', {class:'muted'}, fmtD(parse(x.date))) : null))),
+    nv.items.length > 12 ? h('p', {class:'tiny muted', style:'margin:6px 0 0'}, `y ${nv.items.length - 12} más.`) : null);
 }
 
 /* ---------- Outlook (Microsoft Graph, solo lectura, opcional) ---------- */
@@ -1620,15 +1806,20 @@ function paintSync(){
     webc = h('span', {class:'ss-item ' + (minsSince(w && w.at) > 1440 ? 'ss-warn' : '')}, h('i', {class:'ss-dot'}), `WebC ${w ? 'leído ' + agoMin(w.at) : 'sin conectar'} · `,
       link('Activar revisión automática', openAutoSyncHelp), ' · ', link('Actualizar con el marcador', openWebcHelp));
   } else if (SYNC.webc === 'checking' || SYNC.webc === 'reading'){
-    webc = h('span', {class:'ss-item ss-busy'}, h('i', {class:'ss-dot'}), `Revisando WebC${SYNC.webcMsg ? ' (curso ' + SYNC.webcMsg + ')' : ''}…`);
+    const secs = SYNC.startAt ? Math.round((Date.now() - SYNC.startAt) / 1000) : 0;
+    webc = h('span', {class:'ss-item ss-busy'}, h('i', {class:'ss-dot'}), `Revisando WebC${SYNC.webcMsg ? ' · curso ' + SYNC.webcMsg : ''}${secs >= 3 ? ` · ${secs} s` : ''}…`);
+    clearTimeout(SYNC._tick); SYNC._tick = setTimeout(paintSync, 1000);
   } else if (SYNC.webc === 'login'){
     webc = h('span', {class:'ss-item ss-warn'}, h('i', {class:'ss-dot'}), 'Para revisar WebC, inicia sesión: ', h('a', {href:webcBase() + '/my/', target:'_blank', rel:'noopener'}, 'abrir WebC ↗'), ' · ', link('Reintentar', () => requestWebcSync(true)));
   } else if (SYNC.webc === 'error'){
     webc = h('span', {class:'ss-item ss-warn'}, h('i', {class:'ss-dot'}), `No pude revisar WebC${SYNC.webcMsg ? ' (' + SYNC.webcMsg + ')' : ''} · `, link('Reintentar', () => requestWebcSync(true)));
   } else {
     const l = w && w.last;
-    webc = h('span', {class:'ss-item ss-ok'}, h('i', {class:'ss-dot'}), `WebC revisado ${agoMin(w && w.at)}`, l && (l.nE + l.nN + l.nU) ? ` · ${[l.nE && plural(l.nE, 'fecha nueva', 'fechas nuevas'), l.nU && plural(l.nU, 'cambio', 'cambios'), l.nN && plural(l.nN, 'aviso nuevo', 'avisos nuevos')].filter(Boolean).join(', ')}` : '', ' · ', link('Revisar ahora', () => requestWebcSync(true)));
+    webc = h('span', {class:'ss-item ss-ok'}, h('i', {class:'ss-dot'}), `WebC revisado ${agoMin(w && w.at)}`, l && (l.nE + l.nN + l.nU) ? ` · ${[l.nE && plural(l.nE, 'fecha nueva', 'fechas nuevas'), l.nU && plural(l.nU, 'cambio', 'cambios'), l.nN && plural(l.nN, 'aviso nuevo', 'avisos nuevos')].filter(Boolean).join(', ')}` : '', w && w.partial ? ' · revisión parcial (WebC lento)' : '', ' · ', link('Revisar ahora', () => requestWebcSync(true)));
   }
+  /* Script desactualizado: ofrece instalar la versión publicada. */
+  const oldScript = SYNC.agent && verLt(String(SYNC.agent), SCRIPT_V)
+    ? h('span', {class:'ss-item ss-warn'}, h('i', {class:'ss-dot'}), `Hay una versión más rápida del script de revisión (${SCRIPT_V}) · `, h('a', {href:USERSCRIPT_URL, target:'_blank', rel:'noopener'}, 'Actualizar ↗')) : null;
   let ol = null;
   const c = msCfg();
   if (msConnected() || SYNC.outlook === 'error' || SYNC.outlook === 'reconnect' || SYNC.outlook === 'checking'){
@@ -1638,8 +1829,10 @@ function paintSync(){
     else ol = h('span', {class:'ss-item ss-ok'}, h('i', {class:'ss-dot'}), `Outlook revisado ${agoMin(sd.outlook && sd.outlook.at)} · `, link('Revisar ahora', () => outlookSync(true)));
   } else if (c.clientId) ol = h('span', {class:'ss-item'}, h('i', {class:'ss-dot'}), 'Outlook: ', link('conectar', msConnect));
   const nc = (sd.newCourses || []).filter(x => !(sd.ignoredCourses || []).includes(x.id));
-  el.replaceChildren(...[webc, ol, nc.length ? h('span', {class:'ss-item ss-warn'}, h('i', {class:'ss-dot'}), `${plural(nc.length, 'curso nuevo', 'cursos nuevos')} en WebC (${nc.map(x => x.name).join(', ')}) · `,
-    SYNC.lastPayload ? link('Agregar', () => receiveWebc(SYNC.lastPayload)) : link('Agregar', openWebcHelp), ' · ', link('Ignorar', () => { syncData().ignoredCourses.push(...nc.map(x => x.id)); save(); paintSync(); })) : null].filter(Boolean));
+  /* «Agregar» pide una revisión que incluya esos cursos y luego abre la pantalla de revisión para elegir a qué materia van. */
+  const addNew = () => { if (!SYNC.agent){ openWebcHelp(); return; } SYNC.addCourses = nc.map(x => x.id); requestWebcSync(true, SYNC.addCourses); };
+  el.replaceChildren(...[webc, oldScript, ol, nc.length ? h('span', {class:'ss-item ss-warn'}, h('i', {class:'ss-dot'}), `${plural(nc.length, 'curso nuevo', 'cursos nuevos')} en WebC (${nc.map(x => x.name).join(', ')}) · `,
+    link('Agregar', addNew), ' · ', link('Ignorar', () => { syncData().ignoredCourses.push(...nc.map(x => x.id)); save(); paintSync(); })) : null].filter(Boolean));
 }
 function inboxCard(){
   const sd = syncData(); const items = sd.inbox.filter(x => parse(x.date) >= TODAY).sort((a, b) => a.date.localeCompare(b.date));
@@ -1755,6 +1948,6 @@ document.addEventListener('DOMContentLoaded', () => {
   let deferred = null;
   window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferred = e; $('#installBtn').hidden = false; });
   $('#installBtn').addEventListener('click', async () => { if (!deferred) return; deferred.prompt(); await deferred.userChoice.catch(() => {}); deferred = null; $('#installBtn').hidden = true; });
-  syncBadge(); render(); startAutoSync();
+  syncBadge(); render(); startAutoSync(); loadLessonKeys();
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => {});
 });

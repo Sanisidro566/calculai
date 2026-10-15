@@ -570,3 +570,19 @@ button.res{text-align:left;cursor:pointer;width:100%}
 .new-chip{background:var(--hl);color:#2b2300;border-color:transparent;font-size:.7rem}
 .cl-strip{margin-top:14px;width:100%;max-width:560px}
 @media (max-width:640px){.ib-act{flex-direction:row}.ib-row{flex-direction:column}}
+
+/* ---------- Clases guardadas (paquete) y Novedades ---------- */
+.lp-saved{padding:0;overflow:hidden}
+.saved-lesson{display:flex;flex-direction:column;background:var(--card);min-height:0}
+.saved-bar{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 12px;border-bottom:1px solid var(--line);background:var(--card-2)}
+.saved-act{display:flex;gap:6px;align-items:center}
+.saved-frame{display:block;width:100%;height:78vh;min-height:520px;border:0;background:#fff}
+.saved-lesson:fullscreen{height:100vh}
+.saved-lesson:fullscreen .saved-frame{height:100%;flex:1}
+.drawer-body .saved-frame{height:calc(100vh - 150px);min-height:420px}
+.focus-lesson .saved-frame{height:70vh}
+.novedades .wlist{grid-template-columns:minmax(0,1fr)}
+.novedades .nv-row{align-items:center;text-align:left;min-width:0;box-sizing:border-box;font:inherit;color:inherit}
+.novedades .nv-row .chip{flex:none}
+.novedades .nv-t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media (max-width:640px){.saved-frame{height:72vh;min-height:420px}.novedades .nv-row small{display:none}}
