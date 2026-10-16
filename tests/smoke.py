@@ -363,6 +363,55 @@ async def main():
             await p2.evaluate("localStorage.setItem('calculai-webc-token', 'c' * 1 + 'c'.repeat(31)); SYNC.webc = 'idle'; go('ahora'); requestWebcSync(true)"); await p2.wait_for_timeout(1500)
             check('venció' in await p2.inner_text('#syncStrip'), 'si la clave deja de servir, pide conectar de nuevo')
             check(not errs2, f'sin errores de JavaScript (compañero nuevo) {errs2[:3]}')
+
+            print('8. Marcador «Enviar a CalculAi»: baja los archivos dentro de WebC (sin permiso CORS)')
+            ctx3 = await b.new_context(viewport={'width': 1280, 'height': 900})
+            await ctx3.route(re.compile(r'https://(fonts\.(googleapis|gstatic)\.com|cdnjs\.cloudflare\.com)/.*'), lambda r: r.abort())
+            PAGE_TXT = 'Resumen de prueba sobre trabajo y energía. ' * 8
+            async def webc_site(route):
+                u = route.request.url; H = {'content-type': 'text/html; charset=utf-8'}   # sin access-control-allow-origin, como WebC real
+                if '/lib/ajax/service.php' in u:
+                    if 'enrolled_courses' in u: data = {'courses': [{'id': 10001, 'fullname': 'Física I Sec.1', 'shortname': 'FIS101'}]}
+                    else: data = {'events': []}
+                    return await route.fulfill(status=200, headers={'content-type': 'application/json'}, body=json.dumps([{'error': False, 'data': data}]))
+                if '/course/view.php' in u:
+                    return await route.fulfill(status=200, headers=H, body='<div id="region-main"><li class="section" data-sectionname="Unidad 1">'
+                        '<a href="https://webc.uai.cl/mod/resource/view.php?id=501"><span class="instancename">Guía Newton<span> Archivo</span></span></a> '
+                        '<a href="https://webc.uai.cl/mod/page/view.php?id=502"><span class="instancename">Resumen energía</span></a></li></div>')
+                if '/mod/resource/view.php' in u:   # WebC muestra el PDF dentro de una página
+                    return await route.fulfill(status=200, headers=H, body='<div id="region-main"><object data="https://webc.uai.cl/pluginfile.php/9/mod_resource/content/1/Guia%20Newton.pdf"></object></div>')
+                if '/pluginfile.php/' in u:
+                    return await route.fulfill(status=200, headers={'content-type': 'application/pdf', 'content-disposition': 'inline; filename="Guia Newton.pdf"'}, body=PDF)
+                if '/mod/page/view.php' in u:
+                    return await route.fulfill(status=200, headers=H, body=f'<header>menú</header><div id="region-main"><h2>Resumen energía</h2><p>{PAGE_TXT}</p></div>')
+                return await route.fulfill(status=200, headers=H, body='<html><body><h1>WebC</h1><script>window.M={cfg:{wwwroot:"https://webc.uai.cl",sesskey:"k1"}};</script></body></html>')
+            await ctx3.route('https://webc.uai.cl/**', webc_site)
+            errs3 = []
+            w3 = await ctx3.new_page(); w3.on('pageerror', lambda e: errs3.append(str(e)))
+            await w3.goto('https://webc.uai.cl/my/courses.php')
+            src = open(os.path.join(ROOT, 'conector.js'), encoding='utf-8').read().replace('var SCRIPT = document.currentScript && document.currentScript.src;', f"var SCRIPT = '{APP}conector.js';")
+            await w3.add_script_tag(content=src); await w3.wait_for_timeout(500)
+            await w3.click('#clc-panel button:has-text("Leer cursos seleccionados")')
+            await w3.wait_for_selector('#clc-panel h2:has-text("Todo listo")', timeout=15000)
+            check('2 archivos para crear clases' in await w3.inner_text('#clc-panel'), 'el marcador baja los archivos con la sesión de WebC (PDF dentro de una página y una página)')
+            async with ctx3.expect_page() as popinfo:
+                await w3.click('#clc-panel button:has-text("Enviar a CalculAi")')
+            a3 = await popinfo.value; a3.on('pageerror', lambda e: errs3.append(str(e)))
+            await a3.wait_for_selector('button:has-text("Guardar en CalculAi")', timeout=15000)
+            await a3.wait_for_timeout(800)
+            check('Listo' in await w3.inner_text('#clc-panel'), 'CalculAi confirma que recibió los datos')
+            await a3.click('button:has-text("Guardar en CalculAi")'); await a3.wait_for_timeout(500)
+            n_cache = await a3.evaluate("cachedWebcUrls().then(s => s.size)")
+            check(n_cache == 2, f'los archivos quedan guardados en el navegador ({n_cache})')
+            check(await a3.evaluate("!JSON.stringify(D).includes('JVBERi') && !('files' in D)"), 'los archivos no se meten dentro de los datos ni de los respaldos')
+            await a3.evaluate("classSubj = D.subjects[0].id; go('clases')"); await a3.wait_for_timeout(200)
+            await a3.evaluate("openGenerator(D.subjects[0].id)"); await a3.wait_for_timeout(800)
+            check(await a3.locator('#genBody .gen-ready').count() == 2, 'en «Crear clases» los archivos traídos aparecen como «listo»')
+            for lbl in ['Guía Newton', 'Resumen energía']: await a3.check(f'#genBody .gen-list label:has-text("{lbl}") input')
+            await a3.click('#genBody button:has-text("Leer material")'); await a3.wait_for_timeout(3500)
+            leidos = await a3.locator('#genBody .gen-read li').all_inner_texts()
+            check(len(leidos) == 2 and not await a3.locator('#genBody .gen-err li').count(), f'se leen sin pedirle nada más a WebC {leidos}')
+            check(not errs3, f'sin errores de JavaScript (marcador) {errs3[:3]}')
             await b.close()
     finally:
         srv.terminate()

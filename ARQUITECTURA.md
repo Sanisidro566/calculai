@@ -67,6 +67,8 @@ Todo vive en el navegador de cada persona.
 
 **Ojo con Tampermonkey:** el script corre en un entorno aislado donde `window` no es la ventana real. No compares `ev.source === window` en el script; filtra por `ev.origin`. La prueba `tests/smoke.py` imita ese entorno.
 
+- **Archivos de WebC para crear clases.** WebC entrega la lista de cursos por REST con permiso CORS, pero sus archivos (`pluginfile.php`) no traen `Access-Control-Allow-Origin`, así que la app no puede bajarlos directo (el navegador lo bloquea; la app lo muestra como un solo aviso, error interno `BLOCKED`). El camino que funciona es el marcador «Enviar a CalculAi» (`conector.js`): corre dentro de WebC, baja con tu sesión los archivos de tipo recurso y página (máx. 30 MB c/u, 300 MB en total) y los manda con `postMessage` junto al resto. La app solo acepta archivos si el mensaje viene de `webc.uai.cl` y los guarda en Cache Storage `calculai-archivos` (`saveWebcFiles`), nunca en D, P ni en IndexedDB. `fetchWebcFile` mira primero ese caché, después la clave y después el script. `sw.js` no borra ese caché al actualizar.
+
 ## Reglas que no se rompen
 
 1. **La sincronización (WebC, Outlook, marcador) nunca modifica `D.topics`, `D.items`, `P` ni IndexedDB.** Solo `D.events`, `D.resources`, `D.news`, `D.sync` y `s.webc`/`s.url` de cada materia.

@@ -61,7 +61,7 @@
     .catch(function(e){ render([el('h2', {text:'CalculAi'}), el('p', {class:'clc-err', text:'No pude leer tus cursos (' + e.message + '). Revisa que tu sesión de WebC esté iniciada y vuelve a intentarlo.'})]); });
 
   function chooseCourses(courses){
-    var boxes = [];
+    var boxes = [], filesCb = el('input', {type:'checkbox'}); filesCb.checked = true;
     var list = el('div', {class:'clc-list'}, courses.map(function(c){
       var m = courseMeta(c); var cb = el('input', {type:'checkbox'}); cb.checked = m.academic; cb._course = c; boxes.push(cb);
       return el('label', null, [cb, el('span', null, [el('b', {text:m.name}), el('br'), el('small', {text:[m.code, m.section].filter(Boolean).join(' · ') || c.shortname})])]);
@@ -69,12 +69,13 @@
     render([el('h2', {text:'CalculAi · conectar con WebC'}),
       el('p', {text:'Elige los cursos que quieres llevar a CalculAi. Leeré sus fechas del calendario, los recursos publicados y los avisos recientes.'}),
       list,
+      el('label', null, [filesCb, el('span', null, [el('b', {text:'Traer también los archivos'}), el('br'), el('small', {text:'PDF, PowerPoint, Word y páginas de cada curso, para crear clases en CalculAi. Puede tardar un par de minutos.'})])]),
       el('small', {text:'Nada sale de tu navegador: los datos se entregan directamente a tu CalculAi en ' + APP_ORIGIN + '.'}),
-      el('div', {class:'clc-row'}, [el('button', {class:'clc-btn', text:'Leer cursos seleccionados', onclick:function(){ var sel = boxes.filter(function(b){ return b.checked; }).map(function(b){ return b._course; }); if (!sel.length) return; collect(sel); }})])]);
+      el('div', {class:'clc-row'}, [el('button', {class:'clc-btn', text:'Leer cursos seleccionados', onclick:function(){ var sel = boxes.filter(function(b){ return b.checked; }).map(function(b){ return b._course; }); if (!sel.length) return; collect(sel, filesCb.checked); }})])]);
   }
 
   /* ---------- paso 2: leer ---------- */
-  function collect(courses){
+  function collect(courses, withFiles){
     bar = el('i'); log = el('div', {class:'clc-log'});
     render([el('h2', {text:'Leyendo WebC…'}), el('div', {class:'clc-bar'}, [bar]), log]);
     var payload = {type:'calculai-webc', v:1, origin:MOODLE, site:(document.title.split('|').pop() || '').trim(), at:new Date().toISOString(), courses:[]};
@@ -119,15 +120,59 @@
         }).catch(function(){ return out; }).then(function(o){ payload.courses.push(o); i++; });
       });
     });
+    if (withFiles) seq = seq.then(function(){ return getFiles(payload); });
     seq.then(function(){ step(100, 'Listo.'); deliver(payload); });
+  }
+
+  /* ---------- archivos: desde aquí (dentro de WebC) sí se pueden bajar con tu sesión ---------- */
+  var MAXF = 30 * 1024 * 1024, MAXT = 300 * 1024 * 1024;
+  function fileName(r, fallback){
+    var cd = r.headers.get('content-disposition') || '', m = cd.match(/filename\*=UTF-8''([^;]+)/i) || cd.match(/filename="?([^";]+)"?/i), n = '';
+    if (m){ try { n = decodeURIComponent(m[1]); } catch (e) { n = m[1]; } }
+    if (!n){ try { n = decodeURIComponent(new URL(r.url).pathname.split('/').pop()); } catch (e) {} }
+    return n || fallback;
+  }
+  function sameSite(u){ return typeof u === 'string' && u.indexOf(MOODLE + '/') === 0; }
+  function grab(url, name, hop){
+    if (!sameSite(url)) return Promise.reject(new Error('fuera de WebC'));
+    return fetch(url, {credentials:'same-origin'}).then(function(r){
+      if (!r.ok) throw new Error(r.status);
+      var ct = r.headers.get('content-type') || '', len = +r.headers.get('content-length') || 0;
+      if (len > MAXF) throw new Error('muy grande');
+      if (/text\/html/.test(ct) && !hop) return r.text().then(function(t){
+        /* WebC a veces muestra el archivo dentro de una página: busco el enlace al archivo real */
+        var d = new DOMParser().parseFromString(t, 'text/html');
+        var a = d.querySelector('#region-main a[href*="pluginfile.php"], #region-main object[data*="pluginfile.php"], #region-main iframe[src*="pluginfile.php"], #region-main embed[src*="pluginfile.php"]');
+        var u = a && (a.getAttribute('href') || a.getAttribute('data') || a.getAttribute('src'));
+        if (!u) throw new Error('sin archivo');
+        return grab(new URL(u, url).href, name, true);
+      });
+      return r.arrayBuffer().then(function(buf){ if (buf.byteLength > MAXF) throw new Error('muy grande'); return {buf:buf, ctype:ct, name:fileName(r, name)}; });
+    });
+  }
+  function getFiles(payload){
+    var jobs = [];
+    payload.courses.forEach(function(c){ c.resources.forEach(function(r){ if ((r.type === 'resource' || r.type === 'page') && sameSite(r.url)) jobs.push(r); }); });
+    payload.files = [];
+    if (!jobs.length) return Promise.resolve();
+    var total = 0, done = 0, ok = 0, k = 0;
+    step(96, 'Archivos: 0 de ' + jobs.length + '…');
+    function one(r){
+      var p = r.type === 'page'
+        ? fetch(r.url, {credentials:'same-origin'}).then(function(res){ if (!res.ok) throw new Error(res.status); return res.arrayBuffer().then(function(buf){ return {buf:buf, ctype:'text/html', name:r.name + '.html'}; }); })
+        : grab(r.url + (r.url.indexOf('?') >= 0 ? '&' : '?') + 'redirect=1', r.name, false);
+      return p.then(function(f){ if (total + f.buf.byteLength > MAXT) return; total += f.buf.byteLength; ok++; payload.files.push({url:r.url, name:f.name, ctype:f.ctype, buf:f.buf}); }).catch(function(){});
+    }
+    function worker(){ if (k >= jobs.length) return Promise.resolve(); var r = jobs[k++]; return one(r).then(function(){ done++; if (bar) bar.style.width = (96 + Math.round(4 * done / jobs.length)) + '%'; if (log && log.lastChild) log.lastChild.textContent = 'Archivos: ' + done + ' de ' + jobs.length + ' (' + ok + ' listos)…'; return worker(); }); }
+    return Promise.all([worker(), worker(), worker()]).then(function(){ step(99, ok + ' de ' + jobs.length + ' archivos listos.'); });
   }
 
   /* ---------- paso 3: entregar a CalculAi ---------- */
   function deliver(payload){
     window.__calculaiLast = payload;
-    var nEv = 0, nRes = 0, nNews = 0; payload.courses.forEach(function(c){ nEv += c.events.length; nRes += c.resources.length; nNews += c.news.length; });
+    var nEv = 0, nRes = 0, nNews = 0, nFiles = (payload.files || []).length; payload.courses.forEach(function(c){ nEv += c.events.length; nRes += c.resources.length; nNews += c.news.length; });
     var status = el('p', {text:''});
-    function download(){ var blob = new Blob([JSON.stringify(payload)], {type:'application/json'}); var a = el('a', {href:URL.createObjectURL(blob), download:'calculai-webc-' + new Date().toISOString().slice(0, 10) + '.json'}); document.body.appendChild(a); a.click(); a.remove(); status.textContent = 'Archivo descargado. En CalculAi: Editar → Abrir archivo.'; status.className = 'clc-ok'; }
+    function download(){ var blob = new Blob([JSON.stringify(payload, function(k, v){ return k === 'files' ? undefined : v; })], {type:'application/json'}); var a = el('a', {href:URL.createObjectURL(blob), download:'calculai-webc-' + new Date().toISOString().slice(0, 10) + '.json'}); document.body.appendChild(a); a.click(); a.remove(); status.textContent = 'Archivo descargado. En CalculAi: Editar → Abrir archivo.'; status.className = 'clc-ok'; }
     function send(){
       var w = window.open(APP + '?from=webc', 'calculai');
       if (!w){ status.textContent = 'Tu navegador bloqueó la ventana. Usa «Descargar archivo».'; status.className = 'clc-err'; return; }
@@ -138,9 +183,10 @@
       var iv = setInterval(function(){ tries++; if (sent || tries > 40){ clearInterval(iv); if (!sent){ status.textContent = 'CalculAi no respondió. Usa «Descargar archivo».'; status.className = 'clc-err'; } return; } try { w.postMessage({type:'calculai-ping'}, APP_ORIGIN); } catch (e) {} }, 500);
     }
     render([el('h2', {text:'Todo listo'}),
-      el('p', {text:payload.courses.length + ' cursos · ' + nEv + ' fechas de calendario · ' + nRes + ' recursos · ' + nNews + ' avisos.'}),
+      el('p', {text:payload.courses.length + ' cursos · ' + nEv + ' fechas de calendario · ' + nRes + ' recursos · ' + nNews + ' avisos' + (nFiles ? ' · ' + nFiles + ' archivos para crear clases' : '') + '.'}),
       el('p', null, [el('small', {text:'En CalculAi vas a revisar todo antes de guardarlo. Las fechas que aparezcan dentro de los avisos llegan como sugerencias para que las confirmes tú.'})]),
       el('div', {class:'clc-row'}, [el('button', {class:'clc-btn', text:'Enviar a CalculAi', onclick:send}), el('button', {class:'clc-btn ghost', text:'Descargar archivo', onclick:download})]),
+      nFiles ? el('p', null, [el('small', {text:'Los archivos solo viajan con «Enviar a CalculAi» (no con «Descargar archivo»).'})]) : null,
       status]);
   }
 })();

@@ -662,3 +662,6 @@ button.res{text-align:left;cursor:pointer;width:100%}
 .eval-auto{margin-top:10px;padding:10px 12px;border:1px solid var(--ok);border-radius:10px;display:flex;flex-direction:column;gap:6px;align-items:flex-start}
 .eval-auto ul{margin:0;padding-left:18px}
 details.gen-step > summary{cursor:pointer}
+/* Archivos traídos con el marcador */
+.gen-ready{color:#1f8a4c;font-weight:700}
+.gen-blocked{margin-top:8px;display:grid;gap:6px;justify-items:start}

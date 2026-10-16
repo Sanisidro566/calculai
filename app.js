@@ -1648,11 +1648,36 @@ function matText(mats){
   }).join('');
   return {txt, cut};
 }
-/* Archivos de WebC: los trae el script de revisión (v1.2+) con tu sesión. */
+/* Archivos de WebC. WebC no deja que otra página baje sus archivos (CORS), así que el camino principal es
+   el marcador «Enviar a CalculAi»: corre dentro de WebC, baja los archivos con tu sesión y los manda aquí.
+   Se guardan en el caché del navegador (no en D ni en IndexedDB). Después se prueba la clave y el script. */
+const FILE_CACHE = 'calculai-archivos';
+const fileKey = url => APP_BASE + '__archivo?u=' + encodeURIComponent(url);
+async function saveWebcFiles(files){
+  if (!('caches' in window) || !Array.isArray(files)) return 0;
+  const c = await caches.open(FILE_CACHE); let n = 0;
+  for (const f of files.slice(0, 400)){
+    if (!f || typeof f.url !== 'string' || !f.url.startsWith(WEBC + '/mod/') || !(f.buf instanceof ArrayBuffer) || !f.buf.byteLength || f.buf.byteLength > MAT_MAX_FILE) continue;
+    try { await c.put(fileKey(f.url), new Response(f.buf, {headers:{'content-type':String(f.ctype || 'application/octet-stream').slice(0, 120), 'x-calculai-name':encodeURIComponent(String(f.name || 'archivo').slice(0, 200))}})); n++; } catch {}
+  }
+  return n;
+}
+async function cachedWebcFile(url){
+  try {
+    if (!('caches' in window)) return null;
+    const r = await (await caches.open(FILE_CACHE)).match(fileKey(url)); if (!r) return null;
+    return {name:decodeURIComponent(r.headers.get('x-calculai-name') || 'archivo'), ctype:r.headers.get('content-type') || '', buf:await r.arrayBuffer()};
+  } catch { return null; }
+}
+async function cachedWebcUrls(){
+  try { if (!('caches' in window)) return new Set(); const pre = APP_BASE + '__archivo?u=';
+    return new Set((await (await caches.open(FILE_CACHE)).keys()).map(q => q.url).filter(u => u.startsWith(pre)).map(u => decodeURIComponent(u.slice(pre.length)))); } catch { return new Set(); }
+}
 const fileWaits = {};
-function fetchWebcFile(url){
+async function fetchWebcFile(url){
+  const hit = await cachedWebcFile(url); if (hit) return hit;
   const res = webcToken() && D.resources.find(r => r.url === url && r.file);
-  if (res) return webcFileByToken(res);
+  if (res){ try { return await webcFileByToken(res); } catch (e) { if (!SYNC.agent) throw e; } }
   return new Promise((resolve, reject) => {
     if (!SYNC.agent) return reject(new Error('NO_AGENT'));
     if (verLt(String(SYNC.agent), '1.2.0')) return reject(new Error('OLD_AGENT'));
@@ -1769,6 +1794,7 @@ function openGenerator(sid, preset){
   openDrawer(h('div', {class:'drawer-head'}, h('div', {style:'flex:1'}, h('h3', null, '✦ Crear clases con mi material')), h('button', {class:'iconbtn', type:'button', 'aria-label':'Cerrar', onclick:closeDrawer}, '✕')),
     h('div', {class:'drawer-body', id:'genBody'}));
   drawGen();
+  cachedWebcUrls().then(s => { if (GEN && $('#genBody')){ GEN.ready = s; drawGen(); } });
 }
 function drawGen(){
   const body = document.getElementById('genBody'); if (!body || !GEN) return;
@@ -1778,18 +1804,20 @@ function drawGen(){
   steps.push(h('label', {class:'field'}, h('span', null, 'Materia'),
     h('select', {disabled:busy || null, onchange:e => { GEN = null; openGenerator(e.target.value); }}, D.subjects.map(sb => { const o = h('option', {value:sb.id}, sb.name); if (sb.id === G.sid) o.selected = true; return o; }))));
   /* 1. Material */
-  const agentOk = !!webcToken() || (SYNC.agent && !verLt(String(SYNC.agent), '1.2.0'));
+  const agentOk = !!webcToken() || (SYNC.agent && !verLt(String(SYNC.agent), '1.2.0')), ready = G.ready || new Set(), nReady = res.filter(r => ready.has(r.url)).length;
   const fileIn = h('input', {type:'file', multiple:true, accept:'.pdf,.pptx,.docx,.txt,.md,application/pdf', style:'display:none', onchange:e => { G.local.push(...[...e.target.files].slice(0, 12)); e.target.value = ''; G.mats = []; G.plan = null; drawGen(); }});
   steps.push(h('section', {class:'gen-step'}, h('h4', null, '1. Elige el material'),
     res.length ? h('div', null,
-      h('p', {class:'tiny muted', style:'margin:0 0 6px'}, agentOk ? 'Archivos de esta materia en WebC (los trae el script con tu sesión):' : 'Archivos de esta materia en WebC:'),
-      h('div', {class:'gen-list'}, res.slice(0, 60).map(r => h('label', {class:'chk'}, h('input', {type:'checkbox', disabled:!agentOk || busy || null, checked:G.pick[r.id] || null, onchange:e => { G.pick[r.id] = e.target.checked; G.mats = []; G.plan = null; }}), h('span', null, r.title, ' ', h('small', {class:'muted'}, r.kind || ''))))),
-      !agentOk ? h('p', {class:'tiny note', style:'margin:6px 0 0'}, 'Para traerlos directo, ', h('button', {class:'linkbtn', type:'button', onclick:openWebcConnect}, 'conecta tu WebC'), ' (sin instalar nada). También puedes descargarlos de WebC y subirlos aquí.') : null)
+      h('p', {class:'tiny muted', style:'margin:0 0 6px'}, nReady ? `Archivos de esta materia en WebC (${nReady} ya traídos con el marcador, marcados «listo»):` : 'Archivos de esta materia en WebC:'),
+      h('div', {class:'gen-list'}, res.slice(0, 60).map(r => h('label', {class:'chk'}, h('input', {type:'checkbox', disabled:!(agentOk || ready.has(r.url)) || busy || null, checked:G.pick[r.id] || null, onchange:e => { G.pick[r.id] = e.target.checked; G.mats = []; G.plan = null; }}), h('span', null, r.title, ' ', h('small', {class:'muted'}, r.kind || ''), ready.has(r.url) ? h('small', {class:'gen-ready'}, ' · listo') : null)))),
+      res.length > nReady ? h('p', {class:'tiny note', style:'margin:6px 0 0'}, h('b', null, 'Para traer tus archivos de WebC: '), 'entra a WebC y aprieta el marcador «Enviar a CalculAi». Baja todos los archivos de una vez con tu sesión. ', h('button', {class:'linkbtn', type:'button', onclick:openWebcHelp}, 'Cómo guardar el marcador')) : null,
+      null)
       : h('p', {class:'tiny muted', style:'margin:0 0 6px'}, 'Esta materia no tiene archivos de WebC guardados. Sube aquí los PDF o presentaciones del curso.'),
     h('div', {class:'ai-row', style:'margin-top:8px'}, h('button', {class:'btn ghost small', type:'button', disabled:busy || null, onclick:() => fileIn.click()}, '⇪ Subir archivos'), h('span', {class:'tiny muted'}, 'PDF, PowerPoint (.pptx), Word (.docx) o texto'), fileIn),
     G.local.length ? h('div', {class:'gen-list'}, G.local.map((f, i) => h('div', {class:'chk'}, h('span', null, '📄 ', f.name, ' ', h('small', {class:'muted'}, Math.round(f.size / 1024) + ' KB')), busy ? null : h('button', {class:'linkbtn', type:'button', onclick:() => { G.local.splice(i, 1); G.mats = []; G.plan = null; drawGen(); }}, 'quitar')))) : null,
     h('div', {style:'margin-top:10px'}, h('button', {class:'btn small', type:'button', disabled:busy || null, onclick:genRead}, G.mats.length ? '↻ Volver a leer' : 'Leer material')),
     G.mats.length ? h('ul', {class:'tiny gen-read'}, G.mats.map(m => h('li', null, `✓ ${m.name}: ${plural(m.pages.length, 'página', 'páginas')}, ${m.chars >= 1000 ? Math.round(m.chars / 1000) + ' mil' : m.chars} caracteres`))) : null,
+    G.blocked ? h('div', {class:'tiny note gen-blocked'}, h('b', null, `WebC no deja que CalculAi baje ${plural(G.blocked, 'ese archivo', 'esos ' + G.blocked + ' archivos')} directo.`), ' Tráelos con un clic: entra a WebC y aprieta el marcador «Enviar a CalculAi». También puedes descargarlos de WebC y subirlos con «⇪ Subir archivos». ', h('button', {class:'btn small hlbtn', type:'button', onclick:openWebcHelp}, 'Cómo guardar el marcador')) : null,
     G.errs.length ? h('ul', {class:'tiny gen-err'}, G.errs.map(e => h('li', null, '✗ ' + e))) : null));
   /* 2. Clases */
   if (G.mats.length){
@@ -1823,13 +1851,13 @@ function drawGen(){
 async function genRead(){
   const G = GEN, res = webcFileRes(G.sid).filter(r => G.pick[r.id]);
   if (!res.length && !G.local.length && !G.base.length){ toast('Elige o sube al menos un archivo'); return; }
-  G.mats = G.base.slice(); G.errs = []; G.plan = null;
+  G.mats = G.base.slice(); G.errs = []; G.blocked = 0; G.plan = null;
   const jobs = [...res.map(r => ({name:r.title, get:async () => { const f = await fetchWebcFile(r.url); return {name:f.name || r.title, buf:f.buf, ctype:f.ctype}; }})),
     ...G.local.map(f => ({name:f.name, get:async () => ({name:f.name, buf:await f.arrayBuffer(), ctype:f.type})}))];
   for (let i = 0; i < jobs.length; i++){
     G.busy = `Leyendo ${i + 1} de ${jobs.length}: ${jobs[i].name}…`; drawGen();
     try { const f = await jobs[i].get(); G.mats.push(await readMaterial(f.name, f.buf, f.ctype)); }
-    catch (e) { const m = e && e.message || String(e); G.errs.push(`${jobs[i].name}: ${m === 'NO_AGENT' || m === 'OLD_AGENT' ? 'conecta tu WebC (o revísalo de nuevo) para traerlo' : m}`); }
+    catch (e) { const m = e && e.message || String(e); if (m === 'BLOCKED'){ G.blocked++; continue; } G.errs.push(`${jobs[i].name}: ${m === 'NO_AGENT' || m === 'OLD_AGENT' ? 'conecta tu WebC (o revísalo de nuevo) para traerlo' : m}`); }
   }
   G.busy = ''; drawGen();
 }
@@ -2169,22 +2197,31 @@ function makeExample(){
    CalculAi nunca ve ni guarda tu contraseña.
    ========================================================= */
 const APP_BASE = location.origin + location.pathname.replace(/[^/]*$/, '');
-const BOOKMARKLET = `javascript:(function(){var s=document.createElement('script');s.src='${APP_BASE}conector.js?v='+Date.now();document.body.appendChild(s);})();`;
+const BOOKMARKLET = `javascript:(function(){var s=document.createElement('script');s.src='${APP_BASE}conector.js?v='+Date.now();s.onerror=function(){alert('CalculAi: WebC no dejó abrir el marcador. Recarga WebC e inténtalo de nuevo.');};document.body.appendChild(s);})();`;
 let pendingWebc = null;
 function webcSteps(){
   const bm = h('a', {class:'btn hlbtn', href:BOOKMARKLET, title:'Arrástrame a tu barra de marcadores', onclick:e => { e.preventDefault(); toast('Arrastra este botón a tu barra de marcadores'); }}, '⟳ Enviar a CalculAi');
+  const copy = async () => { try { await navigator.clipboard.writeText(BOOKMARKLET); toast('Copiado: ahora pégalo como dirección del marcador', 4000); } catch { toast('Selecciona el texto del cuadro y cópialo'); } };
   return h('div', null,
-    h('ol', {class:'tiny', style:'padding-left:18px;margin:6px 0 12px;line-height:1.6'},
-      h('li', null, h('b', null, 'Guarda el botón amarillo como marcador: '), 'arrástralo a la barra de marcadores de tu navegador (en Chrome: Ctrl+Mayús+B la muestra).'),
-      h('li', null, 'Abre ', h('a', {href:'https://webc.uai.cl/my/courses.php', target:'_blank', rel:'noopener'}, 'WebC ↗'), ' e inicia sesión como siempre (con Microsoft).'),
-      h('li', null, 'Estando en WebC, toca el marcador «Enviar a CalculAi», elige tus cursos y presiona «Enviar».'),
-      h('li', null, 'Vuelves aquí, revisas lo que llegó y lo guardas.')),
-    h('div', {style:'display:flex;gap:10px;flex-wrap:wrap;align-items:center'}, bm, h('span', {class:'tiny muted'}, '← arrástrame a la barra de marcadores')),
-    h('details', {style:'margin-top:12px'}, h('summary', {class:'tiny', style:'cursor:pointer;font-weight:700'}, '¿No puedes arrastrarlo? (por ejemplo, en el celular)'),
-      h('p', {class:'tiny muted'}, 'Crea un marcador cualquiera, edítalo y pega este texto como dirección. En el celular, después lo abres escribiendo su nombre en la barra de direcciones mientras estás en WebC. Es más cómodo hacerlo en el computador y luego pasar tus datos con «Pasar a otro dispositivo».'),
-      h('div', {style:'display:flex;gap:8px;align-items:center'}, h('input', {type:'text', readonly:true, value:BOOKMARKLET, style:'flex:1;min-width:0;font-family:JetBrains Mono,monospace;font-size:.72rem;border:1px solid var(--line-2);border-radius:8px;padding:6px;background:var(--card-2);color:var(--ink)', onclick:e => e.target.select()}),
-        h('button', {class:'btn ghost small', type:'button', onclick:async () => { try { await navigator.clipboard.writeText(BOOKMARKLET); toast('Copiado'); } catch { toast('Selecciona el texto y cópialo'); } }}, 'Copiar'))),
-    h('p', {class:'tiny muted', style:'margin-top:12px'}, '¿Por qué así? WebC usa inicio de sesión con Microsoft, así que una app externa no puede entrar por ti con usuario y contraseña. El marcador usa tu sesión ya abierta en WebC: lee lo mismo que tú ves y se lo pasa a CalculAi, sin contraseñas y sin servidores intermedios. Funciona también con otros Moodle.'));
+    h('p', {class:'tiny', style:'margin:0 0 8px'}, 'El marcador corre dentro de WebC con tu sesión: trae tus cursos, fechas y avisos, y ', h('b', null, 'baja todos tus archivos de una vez'), ' para crear clases. Se guarda una sola vez y funciona en el computador.'),
+    h('p', {class:'tiny', style:'margin:0 0 4px'}, h('b', null, '1. Guarda el marcador (una sola vez)')),
+    h('ol', {class:'tiny', style:'padding-left:18px;margin:0 0 8px;line-height:1.6'},
+      h('li', null, 'Muestra la barra de marcadores: ', h('b', null, 'Ctrl + Mayús + B'), ' (en Mac: Cmd + Mayús + B).'),
+      h('li', null, 'Arrastra el botón amarillo hasta esa barra y suéltalo.')),
+    h('div', {style:'display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px'}, bm, h('span', {class:'tiny muted'}, '← arrástrame a la barra de marcadores')),
+    h('details', {style:'margin:0 0 12px'}, h('summary', {class:'tiny', style:'cursor:pointer;font-weight:700'}, '¿No se queda en la barra? Agrégalo copiando y pegando'),
+      h('ol', {class:'tiny', style:'padding-left:18px;margin:6px 0;line-height:1.6'},
+        h('li', null, h('button', {class:'btn ghost small', type:'button', onclick:copy}, '⧉ Copiar el marcador')),
+        h('li', null, 'Abre tus marcadores: ', h('b', null, 'Ctrl + Mayús + O'), ' (en Mac: Cmd + Opción + B).'),
+        h('li', null, 'Arriba a la derecha toca ', h('b', null, '⋮ → Agregar marcador nuevo'), '.'),
+        h('li', null, 'Nombre: ', h('b', null, 'Enviar a CalculAi'), '. Dirección (URL): pega lo que copiaste. Guarda.')),
+      h('input', {type:'text', readonly:true, value:BOOKMARKLET, 'aria-label':'Texto del marcador', style:'width:100%;font-family:JetBrains Mono,monospace;font-size:.72rem;border:1px solid var(--line-2);border-radius:8px;padding:6px;background:var(--card-2);color:var(--ink)', onclick:e => e.target.select()})),
+    h('p', {class:'tiny', style:'margin:0 0 4px'}, h('b', null, '2. Úsalo cuando quieras actualizar')),
+    h('ol', {class:'tiny', style:'padding-left:18px;margin:0 0 8px;line-height:1.6'},
+      h('li', null, 'Abre ', h('a', {href:'https://webc.uai.cl/my/courses.php', target:'_blank', rel:'noopener'}, 'WebC ↗'), ' e inicia sesión como siempre.'),
+      h('li', null, 'Aprieta el marcador «Enviar a CalculAi», elige tus cursos y deja marcado «Traer también los archivos».'),
+      h('li', null, 'Cuando termine, aprieta «Enviar a CalculAi». Se abre CalculAi: revisas lo que llegó y lo guardas. Los archivos quedan listos en «Crear clases con mi material».')),
+    h('p', {class:'tiny muted', style:'margin-top:10px'}, '¿Por qué así? WebC no deja que otra página baje sus archivos. El marcador lo hace desde dentro de WebC, con tu sesión ya abierta, sin contraseñas y sin servidores intermedios. Todo queda en tu navegador.'));
 }
 function webcCard(){
   if (webcToken()) return h('section', {class:'edit-sec card', style:'border:2px solid var(--ink)'},
@@ -2224,6 +2261,8 @@ window.addEventListener('message', ev => {
   if (d.type === 'calculai-webc' && Array.isArray(d.courses)){
     if (d.auto){ if (ev.source === window && ev.origin === location.origin) applyAutoWebc(resolveKnownNews(d)); return; }
     try { ev.source && ev.source.postMessage({type:'calculai-received'}, ev.origin); } catch {}
+    const files = d.files; delete d.files;
+    if (Array.isArray(files) && files.length && ev.origin === WEBC) saveWebcFiles(files).then(n => { if (n) toast(`${plural(n, 'archivo de WebC listo', 'archivos de WebC listos')} para crear clases`, 5000); });
     d.origin = d.origin || ev.origin; receiveWebc(d);
   }
 });
@@ -2446,7 +2485,7 @@ async function restSync(rq){
   return payload;
 }
 async function webcFileByToken(r){
-  let res; try { res = await fetch(r.file + (r.file.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(webcToken())); } catch { throw new Error('WebC no permitió descargar el archivo'); }
+  let res; try { res = await fetch(r.file + (r.file.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(webcToken())); } catch { throw new Error('BLOCKED'); }
   const ctype = res.headers.get('content-type') || '';
   if (!res.ok) throw new Error(res.status === 401 || res.status === 403 ? 'tu conexión con WebC venció: conéctala de nuevo' : 'WebC respondió ' + res.status);
   const buf = await res.arrayBuffer();
