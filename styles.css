@@ -586,3 +586,6 @@ button.res{text-align:left;cursor:pointer;width:100%}
 .novedades .nv-row .chip{flex:none}
 .novedades .nv-t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media (max-width:640px){.saved-frame{height:72vh;min-height:420px}.novedades .nv-row small{display:none}}
+
+/* «Para revisar»: posible cambio de fecha de una evaluación que ya está en el calendario */
+.ib-change{font-weight:700;color:var(--bad);margin:0 0 6px;font-size:.92rem;overflow-wrap:anywhere}

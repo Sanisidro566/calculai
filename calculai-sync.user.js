@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Calculai · revisión automática de WebC
 // @namespace    https://sanisidro566.github.io/calculai/
-// @version      1.1.0
+// @version      1.1.1
 // @description  Cada vez que abres Calculai, revisa WebC (con tu sesión ya iniciada) y trae fechas, avisos y recursos nuevos. No pide ni guarda contraseñas.
 // @match        https://sanisidro566.github.io/calculai/*
 // @connect      webc.uai.cl
@@ -21,10 +21,12 @@
    - Los avisos que Calculai ya tiene no se vuelven a abrir. Por eso, desde la segunda vez, es rápido.
    - Si no has iniciado sesión en WebC, se lo avisa a Calculai para que te muestre «Inicia sesión en WebC».
    - Nada se envía a otros servidores. Solo responde a mensajes de la propia página de Calculai.
-   Versión 1.1.0: cursos y avisos en paralelo, avisos ya conocidos se saltan, máximo 100 s por revisión. */
+   Versión 1.1.0: cursos y avisos en paralelo, avisos ya conocidos se saltan, máximo 100 s por revisión.
+  Versión 1.1.1: funciona dentro del entorno aislado de Tampermonkey (antes ignoraba el pedido de Calculai)
+    y siempre responde, aunque WebC no conteste. */
 (function(){
   'use strict';
-  var VERSION = '1.1.0';
+  var VERSION = '1.1.1';
   /* Ajustes de velocidad */
   var PAR_COURSES = 3;      // cursos leídos a la vez
   var PAR_NEWS = 3;         // avisos leídos a la vez dentro de un curso
@@ -47,11 +49,15 @@
 
   var busy = false;
   window.addEventListener('message', function(ev){
-    if (ev.source !== window || ev.origin !== ORIGIN || !ev.data || typeof ev.data !== 'object') return;
+    /* Solo mensajes de la propia página de Calculai. No se compara ev.source con window: en Tampermonkey
+       `window` es un envoltorio de la ventana real y esa comparación descartaba todos los pedidos. */
+    if (ev.origin !== ORIGIN || !ev.data || typeof ev.data !== 'object') return;
     if (ev.data.type === 'calculai-agent-ping') post({type:'calculai-agent-hello', v:VERSION, ok:true});
     if (ev.data.type === 'calculai-sync-request' && !busy){
       busy = true;
-      run(ev.data).catch(function(e){ post({type:'calculai-sync-status', state:'error', msg:String(e && e.message || e)}); }).then(function(){ busy = false; });
+      /* Plazo duro: pase lo que pase con WebC, Calculai recibe una respuesta. */
+      var hard = new Promise(function(_, reject){ setTimeout(function(){ reject(new Error('WebC tardó demasiado en responder')); }, TOTAL_LIMIT + 25000); });
+      Promise.race([run(ev.data), hard]).catch(function(e){ post({type:'calculai-sync-status', state:'error', msg:String(e && e.message || e)}); }).then(function(){ busy = false; });
     }
   });
   post({type:'calculai-agent-hello', v:VERSION, ok:true});
@@ -76,7 +82,7 @@
     var want = (rq.courses || []).map(Number).filter(Boolean);
     var codes = (rq.codes || []).map(function(c){ return String(c).toUpperCase().replace(/[^A-Z0-9]/g, ''); }).filter(Boolean);
     var known = rq.known || {};
-    post({type:'calculai-sync-status', state:'checking'});
+    post({type:'calculai-sync-status', state:'checking', msg:'abriendo WebC'});
     return req('GET', BASE + '/my/').then(function(r){
       var m = r.text.match(/"sesskey":"([^"]+)"/);
       if (r.status >= 400 || /\/login\//.test(r.url) || !m){ post({type:'calculai-sync-status', state:'login', base:BASE}); return; }
@@ -87,6 +93,7 @@
           .then(function(x){ var j = JSON.parse(x.text); if (!j || !j[0] || j[0].error) throw new Error((j && j[0] && j[0].exception && j[0].exception.errorcode) || 'ajax'); return j[0].data; });
       }
       function page(url){ return req('GET', url).then(function(x){ if (x.status >= 400) throw new Error(x.status); return htmlDoc(x.text); }); }
+      post({type:'calculai-sync-status', state:'checking', msg:'leyendo tus cursos'});
       return ajax('core_course_get_enrolled_courses_by_timeline_classification', {classification:'inprogress', limit:0, offset:0, sort:'fullname'}).then(function(d){
         var all = (d.courses || []).filter(function(c){ return courseMeta(c).academic; });
         /* Solo se leen a fondo los cursos que ya son materias en Calculai (por id de WebC o por código). */

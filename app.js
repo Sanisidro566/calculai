@@ -1587,7 +1587,7 @@ function applyWebc(){
 const SYNC = {agent:null, agentWhy:'', webc:'idle', webcMsg:'', outlook:'idle', outlookMsg:'', lastPayload:null};
 const STALE_MIN = 15;
 const USERSCRIPT_URL = APP_BASE + 'calculai-sync.user.js';
-const SCRIPT_V = '1.1.0'; // versión publicada de calculai-sync.user.js (súbela junto con @version del script)
+const SCRIPT_V = '1.1.1'; // versión publicada de calculai-sync.user.js (súbela junto con @version del script)
 const verLt = (a, b) => { const x = a.split('.').map(Number), y = b.split('.').map(Number); for (let i = 0; i < 3; i++){ if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) < (y[i] || 0); } return false; };
 function syncData(){ D.sync = D.sync || {}; for (const k of ['inbox', 'dismissed', 'ignoredCourses']) if (!Array.isArray(D.sync[k])) D.sync[k] = []; return D.sync; }
 const minsSince = s => s ? (Date.now() - new Date(s).getTime()) / 60000 : Infinity;
@@ -1598,12 +1598,14 @@ function requestWebcSync(force, extraCourses = []){
   if (!SYNC.agent || !D.subjects.length) return false;
   if (SYNC.webc === 'checking' || SYNC.webc === 'reading') return false;
   if (!force && minsSince(D.sync && D.sync.webc && D.sync.webc.at) < STALE_MIN) return false;
-  SYNC.webc = 'checking'; SYNC.webcMsg = ''; SYNC.startAt = Date.now(); paintSync();
+  SYNC.webc = 'checking'; SYNC.webcMsg = ''; SYNC.startAt = Date.now(); SYNC.ack = false; paintSync();
   /* known: avisos que ya están guardados, por curso de WebC; el script (v1.1+) no los vuelve a abrir. */
   const known = {};
   D.subjects.forEach(s => { if (!s.webc) return; known[s.webc] = (D.news || []).filter(n => n.subj === s.id && n.src === 'webc' && /^n-/.test(n.id)).map(n => n.id.slice(2)); });
   window.postMessage({type:'calculai-sync-request', base:webcBase(), courses:D.subjects.map(s => s.webc).filter(Boolean).concat(extraCourses), codes:D.subjects.map(s => s.code).filter(Boolean), known}, location.origin);
   clearTimeout(SYNC._t); SYNC._t = setTimeout(() => { if (SYNC.webc === 'checking' || SYNC.webc === 'reading'){ SYNC.webc = 'error'; SYNC.webcMsg = 'WebC no respondió a tiempo'; paintSync(); } }, 150000);
+  /* Si el script no acusa recibo en 12 s, el problema es el script (no WebC): se dice de inmediato. */
+  clearTimeout(SYNC._ack); SYNC._ack = setTimeout(() => { if (!SYNC.ack && SYNC.webc === 'checking'){ clearTimeout(SYNC._t); SYNC.webc = 'error'; SYNC.webcMsg = 'el script de revisión no recibió el pedido: actualízalo'; paintSync(); } }, 12000);
   return true;
 }
 /* Los avisos que el script marca como ya conocidos (known:true) llegan sin texto: se completan con lo guardado. */
@@ -1617,12 +1619,22 @@ function resolveKnownNews(d){
   });
   return d;
 }
+/* Si un aviso nombra una evaluación que ya está en el calendario (misma materia, mismo tipo y número, p. ej.
+   «Control 2») pero con otra fecha, es un posible cambio de fecha: se propone mover esa evaluación, no duplicarla. */
+function evalTag(t){ const m = norm(String(t || '')).match(/\b(control|prueba|examen|certamen|solemne|interrogacion|entrega|informe|proyecto|tarea|laboratorio)\s*(?:n[°º.o]?\s*)?(\d+)?/); return m ? {w:m[1], n:m[2] || ''} : null; }
+function sameEval(x){
+  if (!x.subj) return null;
+  const a = evalTag(x.name) || evalTag(x.line); if (!a) return null;
+  const c = D.events.filter(e => e.subj === x.subj && e.date !== x.date && parse(e.date) >= addDays(TODAY, -1)).filter(e => { const b = evalTag(e.name); return b && b.w === a.w && b.n === a.n; });
+  return c.length === 1 ? c[0] : null;
+}
 function addToInbox(x){
   const sd = syncData();
   if (!x.date || sd.dismissed.includes(x.id) || sd.inbox.some(y => y.id === x.id)) return false;
   if (D.events.some(e => e.webc === x.id || (x.subj && e.subj === x.subj && e.date === x.date && (e.kind === x.kind || norm(e.name) === norm(x.name))))) return false;
   if (parse(x.date) < TODAY) return false;
-  sd.inbox.push({id:x.id, src:x.src, subj:x.subj || '', kind:x.kind, name:x.name, date:x.date, time:x.time || '', line:x.line || '', title:x.newsTitle || x.title || '', url:x.newsUrl || x.url || '', found:new Date().toISOString()});
+  const ev = sameEval(x);
+  sd.inbox.push({id:x.id, src:x.src, subj:x.subj || '', kind:x.kind, name:ev ? ev.name : x.name, date:x.date, time:x.time || '', line:x.line || '', title:x.newsTitle || x.title || '', url:x.newsUrl || x.url || '', found:new Date().toISOString(), replaces:ev ? ev.id : undefined, oldDate:ev ? ev.date : undefined});
   return true;
 }
 function applyAutoWebc(d){
@@ -1630,7 +1642,7 @@ function applyAutoWebc(d){
   SYNC.lastPayload = d;
   const W2 = prepareWebc(d), sd = syncData();
   const known = new Set((D.news || []).map(n => n.id));
-  let nE = 0, nU = 0, nR = 0, nN = 0, nS = 0;
+  let nE = 0, nU = 0, nR = 0, nN = 0, nS = 0, nC = 0;
   const fresh = [], items = []; // items: lo nuevo de esta revisión, para la tarjeta «Novedades»
   W2.courses.forEach(row => {
     const c = row.c, sid = row.target;
@@ -1648,11 +1660,15 @@ function applyAutoWebc(d){
       D.news = (D.news || []).filter(n => !(n.subj === sid && n.src !== 'outlook'));
       c.news.forEach(n => { const id = 'n-' + n.id; const isNew = !known.has(id); if (isNew){ nN++; items.push({k:'aviso', t:n.title, subj:sid, id}); } D.news.push({id, subj:sid, title:n.title, url:n.url, author:n.author, date:newsDate(n), text:n.text, src:'webc', fresh:isNew || undefined}); });
     }
-    row.sugg.forEach(x => { if (!x.dup && !x.calDup && x.kind !== 'otro' && addToInbox({...x, subj:sid, src:'webc'})) nS++; });
+    row.sugg.forEach(x => {
+      if (x.dup || x.calDup || x.kind === 'otro' || !addToInbox({...x, subj:sid, src:'webc'})) return;
+      const it = sd.inbox[sd.inbox.length - 1];
+      if (it.replaces){ nC++; items.push({k:'posible', t:`${it.name}: ${fmtD(parse(it.oldDate))} → ${fmtD(parse(it.date))}`, subj:sid}); } else nS++;
+    });
   });
   (d.unlinked || []).forEach(c => { if (!sd.ignoredCourses.includes(c.id) && !fresh.some(f => f.id === c.id)) fresh.push(c); });
   sd.newCourses = fresh;
-  sd.webc = {origin:W2.origin, at:W2.at, auto:true, partial:!!d.partial, last:{nE, nU, nR, nN, nS}};
+  sd.webc = {origin:W2.origin, at:W2.at, auto:true, partial:!!d.partial, last:{nE, nU, nR, nN, nS, nC}};
   if (nS) items.push({k:'revisar', t:plural(nS, 'fecha encontrada en avisos', 'fechas encontradas en avisos'), subj:''});
   if (items.length){
     const prev = sd.novedades && !sd.novedades.seen ? sd.novedades.items : [];
@@ -1660,7 +1676,7 @@ function applyAutoWebc(d){
   }
   SYNC.webc = 'ok'; SYNC.webcMsg = '';
   save(); render();
-  const parts = [nE && plural(nE, 'fecha nueva', 'fechas nuevas'), nU && plural(nU, 'fecha cambiada', 'fechas cambiadas'), nN && plural(nN, 'aviso nuevo', 'avisos nuevos'), nR && plural(nR, 'recurso nuevo', 'recursos nuevos'), nS && plural(nS, 'fecha por revisar', 'fechas por revisar')].filter(Boolean);
+  const parts = [nC && plural(nC, 'posible cambio de fecha (revísalo en «Para revisar»)', 'posibles cambios de fecha (revísalos en «Para revisar»)'), nE && plural(nE, 'fecha nueva', 'fechas nuevas'), nU && plural(nU, 'fecha cambiada', 'fechas cambiadas'), nN && plural(nN, 'aviso nuevo', 'avisos nuevos'), nR && plural(nR, 'recurso nuevo', 'recursos nuevos'), nS && plural(nS, 'fecha por revisar', 'fechas por revisar')].filter(Boolean);
   toast(parts.length ? 'WebC: ' + parts.join(' · ') : 'WebC revisado: sin novedades', parts.length ? 6000 : 2400);
   if (SYNC.addCourses){ const ids = SYNC.addCourses; SYNC.addCourses = null; const sub = {...d, courses:d.courses.filter(c => ids.includes(c.id))}; if (sub.courses.length) receiveWebc(sub); }
 }
@@ -1668,7 +1684,7 @@ function applyAutoWebc(d){
 function novedadesCard(){
   const nv = D.sync && D.sync.novedades;
   if (!nv || nv.seen || !nv.items || !nv.items.length) return null;
-  const LBL = {fecha:'📅 Fecha nueva', cambio:'↻ Fecha cambiada', aviso:'📣 Aviso', recurso:'📎 Recurso', revisar:'🔎 Para revisar'};
+  const LBL = {posible:'⚠ Posible cambio de fecha', fecha:'📅 Fecha nueva', cambio:'↻ Fecha cambiada', aviso:'📣 Aviso', recurso:'📎 Recurso', revisar:'🔎 Para revisar'};
   const open = x => { if (x.k === 'aviso'){ go('biblio'); } else if (x.k === 'recurso'){ embedUrl(x.url) ? openViewer(x.url, x.t) : window.open(x.url, '_blank', 'noopener'); } else if (x.k === 'fecha' || x.k === 'cambio'){ go('cal'); } };
   return h('section', {class:'card inbox novedades'},
     h('div', {class:'ib-head'}, h('h3', null, `Novedades de WebC · ${nv.items.length}`), h('span', {class:'tiny muted'}, `Revisión ${agoMin(nv.at)}`),
@@ -1781,6 +1797,7 @@ window.addEventListener('message', ev => {
   if (ev.source !== window) return;
   if (d.type === 'calculai-agent-hello'){ SYNC.agent = d.ok ? d.v || '1' : null; SYNC.agentWhy = d.why || ''; paintSync(); if (d.ok) requestWebcSync(false); }
   else if (d.type === 'calculai-sync-status'){
+    SYNC.ack = true;
     if (d.state === 'login'){ clearTimeout(SYNC._t); SYNC.webc = 'login'; }
     else if (d.state === 'error'){ clearTimeout(SYNC._t); SYNC.webc = 'error'; SYNC.webcMsg = d.msg || ''; }
     else { SYNC.webc = d.state; SYNC.webcMsg = d.msg || ''; }
@@ -1807,7 +1824,7 @@ function paintSync(){
       link('Activar revisión automática', openAutoSyncHelp), ' · ', link('Actualizar con el marcador', openWebcHelp));
   } else if (SYNC.webc === 'checking' || SYNC.webc === 'reading'){
     const secs = SYNC.startAt ? Math.round((Date.now() - SYNC.startAt) / 1000) : 0;
-    webc = h('span', {class:'ss-item ss-busy'}, h('i', {class:'ss-dot'}), `Revisando WebC${SYNC.webcMsg ? ' · curso ' + SYNC.webcMsg : ''}${secs >= 3 ? ` · ${secs} s` : ''}…`);
+    webc = h('span', {class:'ss-item ss-busy'}, h('i', {class:'ss-dot'}), `Revisando WebC${SYNC.webcMsg ? (SYNC.webc === 'reading' ? ' · curso ' : ' · ') + SYNC.webcMsg : ''}${secs >= 3 ? ` · ${secs} s` : ''}…`);
     clearTimeout(SYNC._tick); SYNC._tick = setTimeout(paintSync, 1000);
   } else if (SYNC.webc === 'login'){
     webc = h('span', {class:'ss-item ss-warn'}, h('i', {class:'ss-dot'}), 'Para revisar WebC, inicia sesión: ', h('a', {href:webcBase() + '/my/', target:'_blank', rel:'noopener'}, 'abrir WebC ↗'), ' · ', link('Reintentar', () => requestWebcSync(true)));
@@ -1838,17 +1855,25 @@ function inboxCard(){
   const sd = syncData(); const items = sd.inbox.filter(x => parse(x.date) >= TODAY).sort((a, b) => a.date.localeCompare(b.date));
   if (sd.inbox.length !== items.length){ sd.inbox = items; save(); }
   if (!items.length) return null;
-  const confirmX = x => {
+  const confirmX = (x, apart) => {
     if (!x.subj){ toast('Elige a qué materia corresponde'); return false; }
+    const ex = !apart && x.replaces && D.events.find(e => e.id === x.replaces);
+    if (ex){
+      ex.note = `Fecha cambiada según el aviso «${x.title}» (antes: ${fmtD(parse(ex.date))}${ex.time ? ' ' + ex.time : ''}).`;
+      ex.date = x.date; if ((x.time || '').trim()) ex.time = x.time.trim();
+      ex.src = `WebC · aviso «${x.title}»`; ex.ver = true;
+      sd.inbox = sd.inbox.filter(y => y.id !== x.id); sd.dismissed.push(x.id); return true;
+    }
     D.events.push({id:uid('ev'), subj:x.subj, kind:x.kind, name:(x.name || x.title).trim(), date:x.date, time:(x.time || '').trim(), slot:'', ver:true, src:x.src === 'outlook' ? `Outlook · correo «${x.title}»` : `WebC · aviso «${x.title}»`, topics:[], scopeNote:'', note:'Fecha leída automáticamente y confirmada por ti.', webc:x.id});
     sd.inbox = sd.inbox.filter(y => y.id !== x.id); return true;
   };
   const dismiss = x => { sd.inbox = sd.inbox.filter(y => y.id !== x.id); sd.dismissed.push(x.id); };
   return h('section', {class:'card inbox'},
     h('div', {class:'ib-head'}, h('h3', null, `Para revisar · ${items.length}`), h('span', {class:'tiny muted'}, 'Fechas que encontré en avisos de WebC y correos. Agrégalas solo si corresponden.'),
-      items.length > 1 ? h('button', {class:'btn ghost small', type:'button', onclick:() => { let n = 0; items.slice().forEach(x => { if (confirmX(x)) n++; }); save(); render(); toast(`${plural(n, 'fecha agregada', 'fechas agregadas')}`); }}, 'Agregar todas') : null),
+      items.filter(x => !x.replaces).length > 1 ? h('button', {class:'btn ghost small', type:'button', onclick:() => { let n = 0; items.filter(x => !x.replaces).forEach(x => { if (confirmX(x)) n++; }); save(); render(); toast(`${plural(n, 'fecha agregada', 'fechas agregadas')}`); }}, 'Agregar todas') : null),
     h('div', {class:'wlist'}, items.map(x => h('div', {class:'wrow sugg ib-row', style:x.subj ? scs(x.subj) : ''},
       h('div', {style:'min-width:0;flex:1'},
+        x.replaces && D.events.some(e => e.id === x.replaces) ? h('div', {class:'ib-change'}, `⚠ Posible cambio de fecha: ${x.name} · ${fmtD(parse(x.oldDate))} → ${fmtD(parse(x.date))}`) : null,
         h('div', {class:'srow'},
           h('span', {class:'chip ib-src'}, x.src === 'outlook' ? '✉ Outlook' : '⟳ WebC'),
           h('select', {'aria-label':'Materia', onchange:ev => { x.subj = ev.target.value; save(); }}, h('option', {value:''}, 'Materia…'), D.subjects.map(s => { const o = h('option', {value:s.id}, s.short); if (x.subj === s.id) o.selected = true; return o; })),
@@ -1858,7 +1883,10 @@ function inboxCard(){
           h('input', {type:'text', value:x.time, placeholder:'hora', style:'width:96px', 'aria-label':'Hora', onchange:ev => { x.time = ev.target.value; save(); }})),
         h('div', {class:'tiny muted', style:'margin-top:4px'}, x.line ? '«' + x.line + '» — ' : '', x.url ? h('a', {href:x.url, target:'_blank', rel:'noopener'}, x.title || 'ver origen') : x.title)),
       h('div', {class:'ib-act'},
-        h('button', {class:'btn small', type:'button', onclick:() => { if (confirmX(x)){ save(); render(); toast('Agregada al calendario'); } }}, '✓ Agregar'),
+        x.replaces && D.events.some(e => e.id === x.replaces)
+          ? [h('button', {class:'btn small', type:'button', onclick:() => { if (confirmX(x)){ save(); render(); toast(`Fecha cambiada: ${x.name} → ${fmtD(parse(x.date))}`); } }}, '✓ Cambiar fecha'),
+             h('button', {class:'btn ghost small', type:'button', onclick:() => { if (confirmX(x, true)){ save(); render(); toast('Agregada como fecha aparte'); } }}, 'Es otra fecha')]
+          : h('button', {class:'btn small', type:'button', onclick:() => { if (confirmX(x)){ save(); render(); toast('Agregada al calendario'); } }}, '✓ Agregar'),
         h('button', {class:'btn ghost small', type:'button', onclick:() => { dismiss(x); save(); render(); }}, 'Descartar'))))));
 }
 

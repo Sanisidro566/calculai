@@ -43,6 +43,10 @@ Todo vive en el navegador de cada persona.
 2. El script lee a fondo solo los cursos vinculados (por id de WebC o por código), en paralelo, sin reabrir los avisos ya conocidos (`known`) y con un máximo de 100 s.
 3. Responde con `calculai-webc {auto:true}` y llama a `applyAutoWebc`.
 4. `applyAutoWebc` agrega o actualiza fechas, recursos y avisos, manda las fechas leídas en avisos a «Para revisar» y llena la tarjeta «Novedades».
+5. Si una fecha leída en un aviso nombra una evaluación que ya está en el calendario (misma materia, tipo y número, p. ej. «Control 2») con otra fecha, `addToInbox` la marca como **posible cambio de fecha** (`replaces`). En «Para revisar» aparece «✓ Cambiar fecha», que mueve esa evaluación en vez de duplicarla. No se aplica sola porque la fecha viene de leer texto libre.
+6. El script responde siempre: acusa recibo al instante (`state:'checking'`) y tiene un plazo duro. Si la app no recibe ese acuse en 12 s, muestra que el problema es el script, no WebC.
+
+**Ojo con Tampermonkey:** el script corre en un entorno aislado donde `window` no es la ventana real. No compares `ev.source === window` en el script; filtra por `ev.origin`. La prueba `tests/smoke.py` imita ese entorno.
 
 ## Reglas que no se rompen
 

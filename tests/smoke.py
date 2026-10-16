@@ -26,7 +26,8 @@ SEED = r'''() => {
   const data = {v:1, owner:"Prueba", subjects:[
       {id:"s1", name:"Física de prueba", short:"Física", code:"FIS101", color:"naranja"},
       {id:"s2", name:"Álgebra de prueba", short:"Álgebra", code:"MAT113", color:"violeta", webc:23073}],
-    events:[{id:"e1", subj:"s1", kind:"prueba", name:"Prueba 2", date:inD(10), time:"09:00", ver:true, topics:[]}],
+    events:[{id:"e1", subj:"s1", kind:"prueba", name:"Prueba 2", date:inD(10), time:"09:00", ver:true, topics:[]},
+            {id:"e2", subj:"s1", kind:"control", name:"Control 2", date:inD(2), time:"10:00", ver:false, topics:[]}],
     topics:[
       {id:"t1", subj:"s1", code:"F1", title:"Cinemática", scope:"actual", prio:"2", pre:[], content:"# Cinemática\n\n$$x = x_0 + v_0 t$$"},
       {id:"t2", subj:"s1", code:"F2", title:"Newton", scope:"actual", prio:"2", pre:["t1"], url:"https://claude.ai/artifact/PRUEBA-F2"},
@@ -63,7 +64,7 @@ def webc(method, url, data):
     if 'forum/view.php?id=1' in url:
         return 200, url, '<a href="https://webc.uai.cl/mod/forum/discuss.php?d=500">Cambio de fecha</a>'
     if 'discuss.php?d=500' in url:
-        return 200, url, '<article>Cambio de fecha\nde Profe - lunes, 12 de octubre de 2026, 10:00\nEl informe se entrega el viernes 30 de octubre a las 22:00.</article>'
+        return 200, url, '<article>Cambio de fecha\nde Profe - lunes, 12 de octubre de 2026, 10:00\nEl informe se entrega el viernes 30 de octubre a las 22:00.\nEl Control 2 se cambia al 5 de noviembre a las 11:30.</article>'
     return 404, url, ''
 
 GM_SHIM = "window.GM_xmlhttpRequest = function(o){ window.__gm(o.method, o.url, o.data || '').then(function(r){ o.onload({status:r[0], finalUrl:r[1], responseText:r[2]}); }, function(){ o.onerror && o.onerror(); }); };"
@@ -112,20 +113,29 @@ async def main():
             topics_before = await pg.evaluate('JSON.stringify(D.topics)')
             await pg.evaluate("lessonOpen = null; go('ahora')")
             await pg.add_script_tag(content=GM_SHIM)
-            await pg.add_script_tag(content=open(os.path.join(ROOT, 'calculai-sync.user.js'), encoding='utf-8').read())
+            # Tampermonkey corre el script en un entorno aislado donde `window` es un envoltorio (no la ventana real).
+            # Se imita aquí para que la prueba falle si el script vuelve a depender de `ev.source === window`.
+            src = open(os.path.join(ROOT, 'calculai-sync.user.js'), encoding='utf-8').read()
+            await pg.add_script_tag(content='(function(window){' + src + '\n})(new Proxy(window, {get:function(t,k){var v=t[k]; return typeof v==="function"?v.bind(t):v;}}));')
             await pg.wait_for_timeout(2500)
             strip = await pg.inner_text('#syncStrip')
             check('WebC revisado' in strip, 'la barra muestra «WebC revisado»')
             check(await pg.evaluate("D.subjects.find(s=>s.id==='s1').webc") == 23482, 'la materia se vincula por código (FIS101)')
             check(await pg.evaluate("D.events.some(e=>e.webc==='cal:7001')"), 'la fecha del calendario de WebC se agrega')
             check(await pg.evaluate("D.resources.some(r=>r.title==='Guía 10')"), 'el recurso nuevo se agrega')
-            check(await pg.evaluate("D.sync.inbox.length") == 1, 'la fecha encontrada en un aviso queda en «Para revisar»')
+            check(await pg.evaluate("D.sync.inbox.filter(x=>!x.replaces).length") == 1, 'la fecha encontrada en un aviso queda en «Para revisar»')
+            check(await pg.evaluate("D.sync.inbox.some(x=>x.replaces==='e2')"), 'el aviso que mueve el «Control 2» se reconoce como cambio de fecha')
             check(await pg.locator('.novedades').count() == 1, 'aparece la tarjeta «Novedades de WebC»')
             check(topics_before == await pg.evaluate('JSON.stringify(D.topics)'), 'la revisión NO toca los temas ni las clases')
             check(await pg.evaluate('lessonKeys.size') == 2, 'las clases guardadas siguen ahí')
             await pg.click('#syncStrip button:has-text("Revisar ahora")'); await pg.wait_for_timeout(2000)
             check(await pg.evaluate("D.events.filter(e=>e.webc==='cal:7001').length") == 1, 'revisar de nuevo no duplica fechas')
             check(await pg.evaluate("(D.news.find(n=>n.id==='n-500')||{}).text?.length > 0"), 'el aviso ya conocido conserva su texto')
+            await pg.evaluate("go('ahora')"); await pg.wait_for_timeout(300)
+            await pg.click('.inbox button:has-text("Cambiar fecha")'); await pg.wait_for_timeout(300)
+            e2 = await pg.evaluate("(() => { const e = D.events.find(e=>e.id==='e2'); return e.date.slice(5) + ' ' + e.time; })()")
+            check(e2 == '11-05 11:30', f'«Cambiar fecha» mueve el Control 2 existente ({e2})')
+            check(await pg.evaluate("D.events.filter(e=>/control 2/i.test(e.name)).length") == 1, 'el cambio de fecha no duplica el Control 2')
 
             print('4. Recarga y celular')
             await pg.reload(); await pg.wait_for_timeout(800)
