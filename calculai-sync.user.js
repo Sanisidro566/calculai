@@ -124,7 +124,6 @@
     var started = Date.now();
     function timeUp(){ return Date.now() - started > TOTAL_LIMIT; }
     var BASE = String(rq.base || 'https://webc.uai.cl').replace(/\/+$/, '');
-    try { hosts[new URL(BASE).hostname] = 1; } catch (e) {}
     if (!/^https:\/\/[^/]+(\/[^?#]*)?$/.test(BASE) && !/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?/.test(BASE)) return Promise.reject(new Error('dirección de Moodle no válida'));
     var want = (rq.courses || []).map(Number).filter(Boolean);
     var codes = (rq.codes || []).map(function(c){ return String(c).toUpperCase().replace(/[^A-Z0-9]/g, ''); }).filter(Boolean);

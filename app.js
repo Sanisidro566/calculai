@@ -34,10 +34,16 @@
    UTILIDADES
    ========================================================= */
 const $ = s => document.querySelector(s);
+/* Seguridad: un enlace o recuadro solo puede apuntar a la web (https/http), a un correo, a un archivo creado
+   aquí (blob:) o a una dirección relativa. Así un archivo compartido no puede colar «javascript:» u otros
+   esquemas que ejecuten código dentro de Calculai. La única excepción es el marcador «Enviar a Calculai». */
+function urlOk(v){ v = String(v).trim(); let bm = ''; try { bm = BOOKMARKLET; } catch {} if (bm && v === bm) return true; const m = v.match(/^([a-z][a-z0-9+.-]*):/i); return !m || /^(https?|mailto|blob)$/i.test(m[1]); }
+function openExt(url){ if (url && /^https?:\/\//i.test(String(url).trim())) window.open(url, '_blank', 'noopener'); else if (url) toast('Ese enlace no es una dirección web'); }
 function h(tag, attrs, ...kids){
   const el = document.createElement(tag);
   if (attrs) for (const [k, v] of Object.entries(attrs)){
     if (v == null || v === false) continue;
+    if ((k === 'href' || k === 'src' || k === 'action' || k === 'formaction' || k === 'data') && !urlOk(v)) continue;
     if (k === 'class') el.className = v;
     else if (k === 'style') el.style.cssText = v;
     else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2), v);
@@ -104,8 +110,16 @@ const INTERVAL = {aprendiendo:1, practicado:3, repaso:1, dominado:7};
 const STORE = 'calculai:v1', OLD_STORE = 'cuaderno-web:v1';
 const blankData = () => ({v:1, owner:'', subjects:[], events:[], topics:[], items:[], resources:[], news:[], sync:{}, plan:{}});
 const blankProg = () => ({status:{}, attempts:[], errors:[], days:{}, sessions:[], dayLoad:{}, lastLesson:''});
-function normData(d){ const b = blankData(); if (!d || typeof d !== 'object') return b; for (const k of Object.keys(b)) if (d[k] != null && typeof d[k] === typeof b[k]) b[k] = d[k]; return b; }
-function normProg(p){ const b = blankProg(); if (!p || typeof p !== 'object') return b; for (const k of Object.keys(b)) if (p[k] != null && typeof p[k] === typeof b[k]) b[k] = p[k]; return b; }
+/* Copian solo las claves conocidas y con el tipo correcto. Los arreglos deben ser arreglos de objetos con id
+   (un archivo dañado o malicioso no rompe la app ni mete datos raros). */
+const isObj = x => !!x && typeof x === 'object' && !Array.isArray(x);
+function normField(v, b){
+  if (Array.isArray(b)) return Array.isArray(v) ? v.filter(isObj).map(x => (x.id == null || typeof x.id === 'string') ? x : {...x, id:String(x.id)}) : b;
+  if (isObj(b)) return isObj(v) ? v : b;
+  return v != null && typeof v === typeof b ? v : b;
+}
+function normData(d){ const b = blankData(); if (!isObj(d)) return b; for (const k of Object.keys(b)) b[k] = normField(d[k], b[k]); return b; }
+function normProg(p){ const b = blankProg(); if (!isObj(p)) return b; for (const k of Object.keys(b)) b[k] = k === 'attempts' || k === 'errors' || k === 'sessions' ? (Array.isArray(p[k]) ? p[k].filter(isObj) : b[k]) : normField(p[k], b[k]); return b; }
 let D = blankData(), P = blankProg(), storageOk = true;
 try { const raw = localStorage.getItem(STORE) || localStorage.getItem(OLD_STORE); if (raw){ const j = JSON.parse(raw); D = normData(j.data); P = normProg(j.progress); } } catch { storageOk = false; }
 let saveT = null;
@@ -543,7 +557,7 @@ function openSaved(url, title){
     h('div', {class:'drawer-body'}, savedFrame(url, title)));
 }
 /* Abre un recurso: guardado → dentro de Calculai; Drive/YouTube/PDF → visor; lo demás → pestaña aparte. */
-function openResource(url, title){ if (!url) return; if (lessonKeys.has(url)) openSaved(url, title); else if (embedUrl(url)) openViewer(url, title); else window.open(url, '_blank', 'noopener'); }
+function openResource(url, title){ if (!url) return; if (lessonKeys.has(url)) openSaved(url, title); else if (embedUrl(url)) openViewer(url, title); else openExt(url); }
 /* Importa un paquete de clases: {app:'calculai', lessons:[{key, code, title, html}], data?, progress?}. */
 async function importLessons(list){
   const ok = (list || []).filter(x => x && typeof x.key === 'string' && /^https?:\/\//.test(x.key) && typeof x.html === 'string' && x.html.length < 3e6);
@@ -557,6 +571,7 @@ function lessonOrder(sid){ const memo = {}; return topicsOf(sid).slice().sort((a
 function embedUrl(u){
   try {
     const x = new URL(u, location.href);
+    if (x.protocol !== 'https:') return null; // solo https dentro de un recuadro
     if (/(^|\.)drive\.google\.com$/.test(x.hostname)){
       const f = x.pathname.match(/\/file\/d\/([^/]+)/); const id = f ? f[1] : x.searchParams.get('id');
       const folder = x.pathname.match(/\/folders\/([^/?]+)/);
@@ -566,7 +581,7 @@ function embedUrl(u){
     if (x.hostname === 'docs.google.com'){ const m = x.pathname.match(/^\/(document|presentation|spreadsheets)\/d\/([^/]+)/); if (m) return `https://docs.google.com/${m[1]}/d/${m[2]}/preview`; }
     if (/(^|\.)youtube\.com$/.test(x.hostname) && x.searchParams.get('v')) return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(x.searchParams.get('v'))}`;
     if (x.hostname === 'youtu.be') return `https://www.youtube-nocookie.com/embed${x.pathname}`;
-    if (x.origin === location.origin || /\.pdf$/i.test(x.pathname)) return x.href;
+    if (/\.pdf$/i.test(x.pathname)) return x.href;
   } catch {}
   return null;
 }
@@ -1136,7 +1151,11 @@ function vAgenda(v){
    Dominado sale del plan (si lo marcaste hoy, se muestra hecho) y lo demás se reacomoda. Ajustes en D.plan.
    Las horas de un día editadas en «Horas disponibles» (P.dayLoad) mandan sobre las horas por día del plan. */
 const PLAN_DEF = {on:false, start:'hoy', before:7, hours:2, minPer:60, days:[1, 2, 3, 4, 5, 6, 0]};
-const planCfg = () => ({...PLAN_DEF, ...(D.plan || {})});
+function planCfg(){
+  const p = isObj(D.plan) ? D.plan : {}, n = (v, lo, hi, d) => { v = Number(v); return Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : d; };
+  const days = Array.isArray(p.days) ? p.days.map(Number).filter(x => Number.isInteger(x) && x >= 0 && x <= 6) : PLAN_DEF.days;
+  return {on:p.on === true, start:p.start === 'antes' ? 'antes' : 'hoy', before:Math.round(n(p.before, 1, 60, 7)), hours:n(p.hours, .5, 12, 2), minPer:Math.round(n(p.minPer, 20, 240, 60)), days:days.length ? [...new Set(days)] : PLAN_DEF.days};
+}
 const doneOn = t => ['practicado', 'dominado'].includes(st(t.id)) ? (P.status[t.id] && P.status[t.id].at) || '' : null;
 let planCache = null;
 function buildPlan(){
@@ -1893,7 +1912,7 @@ let palItems = [], palSel = 0;
 function palData(){
   const out = D.subjects.length ? TABS.map(t => ({l:'Ir a ' + t.l, k:'Sección', run:() => go(t.k)})) : [];
   D.topics.forEach(t => out.push({l:(t.code ? t.code + ' · ' : '') + t.title, k:S(t.subj).short, dot:`var(--s-${st(t.id)})`, run:() => openLesson(t.id)}));
-  D.resources.filter(r => r.url).forEach(r => out.push({l:r.title, k:S(r.subj).short + ' · abrir ↗', run:() => window.open(r.url, '_blank', 'noopener')}));
+  D.resources.filter(r => r.url).forEach(r => out.push({l:r.title, k:S(r.subj).short + ' · abrir ↗', run:() => openExt(r.url)}));
   D.subjects.forEach(s => out.push({l:'Practicar ' + s.short, k:'Acción', run:() => { pracFilter = s.id; Q = null; go('practica'); }}));
   out.push({l:'Nuevo evento', k:'Acción', run:() => openEventForm(null)}, {l:'Nuevo tema', k:'Acción', run:() => openTopicForm(null)}, {l:'Nuevo ejercicio', k:'Acción', run:() => openItemForm(null)}, {l:'Cambiar tema claro/oscuro', k:'Acción', run:toggleTheme});
   return out;
@@ -2132,7 +2151,8 @@ const verLt = (a, b) => { const x = a.split('.').map(Number), y = b.split('.').m
 function syncData(){ D.sync = D.sync || {}; for (const k of ['inbox', 'dismissed', 'ignoredCourses']) if (!Array.isArray(D.sync[k])) D.sync[k] = []; return D.sync; }
 const minsSince = s => s ? (Date.now() - new Date(s).getTime()) / 60000 : Infinity;
 function agoMin(s){ const m = minsSince(s); if (!isFinite(m)) return 'nunca'; if (m < 1) return 'recién'; if (m < 60) return `hace ${Math.round(m)} min`; if (m < 1440) return `hace ${Math.round(m / 60)} h`; return `hace ${Math.round(m / 1440)} d`; }
-const webcBase = () => (D.sync && D.sync.webc && D.sync.webc.origin) || 'https://webc.uai.cl';
+/* El script solo puede conectarse a WebC (@connect webc.uai.cl): otra dirección guardada (p. ej. en un archivo compartido) no se usa. */
+const webcBase = () => { const o = D.sync && D.sync.webc && D.sync.webc.origin; return /^https:\/\/webc\.uai\.cl$/.test(o || '') ? o : 'https://webc.uai.cl'; };
 
 function requestWebcSync(force, extraCourses = []){
   if (!SYNC.agent || (!D.subjects.length && !SYNC.first)) return false;
@@ -2232,7 +2252,7 @@ function novedadesCard(){
   const nv = D.sync && D.sync.novedades;
   if (!nv || nv.seen || !nv.items || !nv.items.length) return null;
   const LBL = {posible:'⚠ Posible cambio de fecha', fecha:'📅 Fecha nueva', cambio:'↻ Fecha cambiada', aviso:'📣 Aviso', recurso:'📎 Recurso', revisar:'🔎 Para revisar'};
-  const open = x => { if (x.k === 'aviso'){ go('biblio'); } else if (x.k === 'recurso'){ embedUrl(x.url) ? openViewer(x.url, x.t) : window.open(x.url, '_blank', 'noopener'); } else if (x.k === 'fecha' || x.k === 'cambio'){ go('cal'); } };
+  const open = x => { if (x.k === 'aviso'){ go('biblio'); } else if (x.k === 'recurso'){ embedUrl(x.url) ? openViewer(x.url, x.t) : openExt(x.url); } else if (x.k === 'fecha' || x.k === 'cambio'){ go('cal'); } };
   return h('section', {class:'card inbox novedades'},
     h('div', {class:'ib-head'}, h('h3', null, `Novedades de WebC · ${nv.items.length}`), h('span', {class:'tiny muted'}, `Revisión ${agoMin(nv.at)}`),
       h('button', {class:'btn ghost small', type:'button', onclick:() => { nv.seen = true; save(); render(); }}, 'Marcar como visto')),
@@ -2524,6 +2544,10 @@ document.addEventListener('DOMContentLoaded', () => {
   let deferred = null;
   window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferred = e; $('#installBtn').hidden = false; });
   $('#installBtn').addEventListener('click', async () => { if (!deferred) return; deferred.prompt(); await deferred.userChoice.catch(() => {}); deferred = null; $('#installBtn').hidden = true; });
+  /* Calculai no funciona dentro de otra página: así una página ajena no puede usarla de fondo para
+     engañarte con clics, ni puede volver a aparecer la app dentro del recuadro de una clase. */
+  let framed = true; try { framed = window.top !== window.self; } catch {}
+  if (framed){ $('#view').replaceChildren(h('div', {class:'card', style:'margin:24px'}, h('p', null, 'Calculai se abre en su propia pestaña.'), h('a', {class:'btn', href:'https://sanisidro566.github.io/calculai/', target:'_blank', rel:'noopener'}, 'Abrir Calculai ↗'))); return; }
   syncBadge(); render(); startAutoSync(); loadLessonKeys();
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => {});
 });
