@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Calculai · revisión automática de WebC
 // @namespace    https://sanisidro566.github.io/calculai/
-// @version      1.1.1
+// @version      1.2.0
 // @description  Cada vez que abres Calculai, revisa WebC (con tu sesión ya iniciada) y trae fechas, avisos y recursos nuevos. No pide ni guarda contraseñas.
 // @match        https://sanisidro566.github.io/calculai/*
 // @connect      webc.uai.cl
@@ -23,10 +23,12 @@
    - Nada se envía a otros servidores. Solo responde a mensajes de la propia página de Calculai.
    Versión 1.1.0: cursos y avisos en paralelo, avisos ya conocidos se saltan, máximo 100 s por revisión.
   Versión 1.1.1: funciona dentro del entorno aislado de Tampermonkey (antes ignoraba el pedido de Calculai)
-    y siempre responde, aunque WebC no conteste. */
+    y siempre responde, aunque WebC no conteste.
+  Versión 1.2.0: cuando eliges archivos en «Crear clases con mi material», trae ese archivo de WebC
+    (solo archivos y páginas de un curso: /mod/resource, /mod/page o /pluginfile.php; nada más). */
 (function(){
   'use strict';
-  var VERSION = '1.1.1';
+  var VERSION = '1.2.0';
   /* Ajustes de velocidad */
   var PAR_COURSES = 3;      // cursos leídos a la vez
   var PAR_NEWS = 3;         // avisos leídos a la vez dentro de un curso
@@ -53,6 +55,12 @@
        `window` es un envoltorio de la ventana real y esa comparación descartaba todos los pedidos. */
     if (ev.origin !== ORIGIN || !ev.data || typeof ev.data !== 'object') return;
     if (ev.data.type === 'calculai-agent-ping') post({type:'calculai-agent-hello', v:VERSION, ok:true});
+    if (ev.data.type === 'calculai-file-request' && typeof ev.data.id === 'string' && typeof ev.data.url === 'string'){
+      var fid = ev.data.id.slice(0, 40);
+      fileQueue = fileQueue.then(function(){ return getFile(ev.data.url); }).then(function(f){
+        post({type:'calculai-file', id:fid, ok:true, name:f.name, ctype:f.ctype, buf:f.buf});
+      }, function(e){ post({type:'calculai-file', id:fid, ok:false, msg:String(e && e.message || e)}); });
+    }
     if (ev.data.type === 'calculai-sync-request' && !busy){
       busy = true;
       /* Plazo duro: pase lo que pase con WebC, Calculai recibe una respuesta. */
@@ -61,6 +69,44 @@
     }
   });
   post({type:'calculai-agent-hello', v:VERSION, ok:true});
+
+  /* --- Archivos para «Crear clases con mi material» --- */
+  var fileQueue = Promise.resolve(), FILE_MAX = 30e6;
+  var hosts = {'webc.uai.cl':1};
+  function fileUrlOk(u){
+    try { u = new URL(u); } catch (e) { return false; }
+    return u.protocol === 'https:' && hosts[u.hostname] && (/^\/mod\/(resource|page)\/view\.php$/.test(u.pathname) && /^\?id=\d+(&redirect=1)?$/.test(u.search) || /^\/pluginfile\.php\//.test(u.pathname));
+  }
+  function bin(url){
+    return new Promise(function(resolve, reject){
+      gmx({method:'GET', url:url, responseType:'arraybuffer', anonymous:false, withCredentials:true, timeout:90000,
+        onload:function(r){ resolve({status:r.status, url:r.finalUrl || url, headers:r.responseHeaders || '', buf:r.response}); },
+        onerror:function(){ reject(new Error('sin conexión con WebC')); }, ontimeout:function(){ reject(new Error('WebC tardó demasiado')); }});
+    });
+  }
+  function header(h, k){ var m = h.match(new RegExp('^' + k + ':\\s*(.+)$', 'im')); return m ? m[1].trim() : ''; }
+  function fileName(r){
+    var cd = header(r.headers, 'content-disposition'), m = cd.match(/filename\*=UTF-8''([^;]+)/i) || cd.match(/filename="?([^";]+)"?/i);
+    try { return decodeURIComponent(m ? m[1] : (new URL(r.url).pathname.split('/').pop() || 'archivo')); } catch (e) { return 'archivo'; }
+  }
+  function getFile(url, hop){
+    if (!fileUrlOk(url)) return Promise.reject(new Error('ese enlace no es un archivo de un curso de WebC'));
+    if (/\/mod\/resource\//.test(url) && !/redirect=1/.test(url)) url += '&redirect=1';
+    return bin(url).then(function(r){
+      if (/\/login\//.test(r.url)) throw new Error('tu sesión de WebC se cerró: vuelve a entrar a WebC');
+      if (r.status >= 400) throw new Error('WebC respondió ' + r.status);
+      if (!r.buf || r.buf.byteLength > FILE_MAX) throw new Error('el archivo es muy grande (máximo 30 MB)');
+      var ctype = header(r.headers, 'content-type');
+      if (/text\/html/i.test(ctype) && /\/mod\/resource\//.test(url) && !hop){
+        /* Algunos recursos muestran una página con el archivo incrustado: se busca el enlace al archivo. */
+        var d = htmlDoc(new TextDecoder().decode(r.buf)), a = d.querySelector('#region-main a[href*="/pluginfile.php/"], object[data*="/pluginfile.php/"], iframe[src*="/pluginfile.php/"], a[href*="/pluginfile.php/"]');
+        var next = a && (a.getAttribute('href') || a.getAttribute('data') || a.getAttribute('src'));
+        if (!next) throw new Error('no encontré el archivo dentro de esa página de WebC');
+        return getFile(new URL(next, r.url).href, true);
+      }
+      return {name:fileName(r), ctype:ctype, buf:r.buf};
+    });
+  }
 
   /* Ejecuta fn sobre items con como máximo n a la vez; respeta el orden de los resultados. */
   function pool(items, n, fn){
@@ -78,6 +124,7 @@
     var started = Date.now();
     function timeUp(){ return Date.now() - started > TOTAL_LIMIT; }
     var BASE = String(rq.base || 'https://webc.uai.cl').replace(/\/+$/, '');
+    try { hosts[new URL(BASE).hostname] = 1; } catch (e) {}
     if (!/^https:\/\/[^/]+(\/[^?#]*)?$/.test(BASE) && !/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?/.test(BASE)) return Promise.reject(new Error('dirección de Moodle no válida'));
     var want = (rq.courses || []).map(Number).filter(Boolean);
     var codes = (rq.codes || []).map(function(c){ return String(c).toUpperCase().replace(/[^A-Z0-9]/g, ''); }).filter(Boolean);

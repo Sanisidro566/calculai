@@ -10,7 +10,10 @@
                            vWelcome · vAhora · vMapa · vPractica (con vErrores adentro) · vCal (vMonth, vAgenda, plan) · vBiblio
    CLASES ................ vClases, vLesson, visor de Drive/YouTube/PDF (embedUrl, viewer)
      · Clases guardadas .. paquete de clases en IndexedDB «calculai-clases» (ldbPut/ldbGet, savedFrame, importPack)
-     · IA ................ AI_MODES, aiPrompt, callAI, openAIPanel
+     · IA ................ AI_MODES, aiPrompt, callAI (Google/Anthropic/OpenAI), aiConfigEl, openAIPanel
+   GENERADOR DE CLASES ... openGenerator: lee PDF/pptx/docx (readMaterial, vendor/pdfjs), trae archivos de WebC
+                           con el script (fetchWebcFile), la IA arma clases (genPlan/genBuild o copiar y pegar),
+                           parseLessons → addGenerated (temas con content + ejercicios)
    EDITAR ................ formularios, vEditar, respaldo, importFile/importPack
    MODO ENFOQUE · BUSCADOR (Ctrl+K) · EJEMPLO (makeExample)
    CONECTAR CON WEBC ..... marcador «Enviar a Calculai» (conector.js): receiveWebc, prepareWebc, vWebcReview
@@ -223,12 +226,13 @@ function vWelcome(v){
   const file = h('input', {type:'file', accept:'.json,application/json', style:'display:none', onchange:e => importFile(e.target.files[0], true)});
   v.append(h('div', {class:'welcome'},
     h('p', {class:'note', style:'margin:0 0 6px'}, 'calculai · tu plan de estudio'),
+    SYNC.agent && SYNC.first ? syncStrip() : null,
     h('h1', null, 'Estudia con un plan, ', h('span', {class:'hl'}, 'no con culpa.')),
     h('p', {class:'muted', style:'font-size:1.05rem'}, 'Agrega tus materias, evaluaciones y temas. Calculai te dice qué estudiar en la próxima hora y por qué, te hace practicar con honestidad y te avisa lo que viene.'),
     h('div', {class:'choices'},
       h('button', {class:'choice', type:'button', onclick:startEmpty}, h('span', {class:'ico'}, '✎'), h('b', null, 'Empezar desde cero'), h('span', null, 'Creo mi primera materia y voy agregando lo demás.')),
       h('button', {class:'choice', type:'button', onclick:() => { D = makeExample(); P = blankProg(); save(); go('ahora'); toast('Cargué un ejemplo: edítalo o bórralo cuando quieras'); }}, h('span', {class:'ico'}, '◎'), h('b', null, 'Ver un ejemplo'), h('span', null, 'Tres materias de muestra para conocer la app. Después lo borras.')),
-      h('button', {class:'choice', type:'button', onclick:openWebcHelp}, h('span', {class:'ico'}, '⟳'), h('b', null, 'Conectar con WebC'), h('span', null, 'Trae tus cursos, fechas, recursos y avisos desde WebC (o tu Moodle).')),
+      h('button', {class:'choice', type:'button', onclick:() => SYNC.agent ? firstConnect() : openWebcHelp()}, h('span', {class:'ico'}, '⟳'), h('b', null, 'Conectar con WebC'), h('span', null, SYNC.agent ? 'El script de revisión está activo: elige tus cursos y traigo fechas, avisos y archivos.' : 'Trae tus cursos, fechas, recursos y avisos desde WebC (o tu Moodle).')),
       h('button', {class:'choice', type:'button', onclick:() => file.click()}, h('span', {class:'ico'}, '⇪'), h('b', null, 'Abrir un archivo'), h('span', null, 'Un respaldo tuyo, tu paquete de clases o una plantilla que te compartió alguien de tu curso.'))),
     file,
     h('div', {class:'feat'},
@@ -236,7 +240,26 @@ function vWelcome(v){
       h('div', null, h('b', null, 'Mapa de dominio'), 'Tus temas, sus prerrequisitos y tu estado en cada uno.'),
       h('div', null, h('b', null, 'Práctica honesta'), 'Antes de responder dices qué tan seguro o segura estás. Los «errores peligrosos» se marcan solos.'),
       h('div', null, h('b', null, 'Calendario'), 'Con fechas confirmadas o no, y exportable a Google Calendar.')),
-    h('p', {class:'tiny muted', style:'margin-top:22px'}, 'Privacidad: todo se guarda solo en este dispositivo y navegador. Nada se envía a ningún servidor. Usa «Editar → Respaldo» para llevar tus datos a otro equipo.')));
+    h('div', {class:'card welcome-howto'}, h('b', null, '¿Te lo compartió alguien de tu curso?'),
+      h('ol', {class:'tiny'},
+        h('li', null, 'Conecta tu WebC: con el marcador «Enviar a Calculai» (sin instalar nada) o con el script de revisión, que además revisa WebC solo cada vez que abres la app (', h('button', {class:'linkbtn', type:'button', onclick:openAutoSyncHelp}, 'cómo instalarlo'), ').'),
+        h('li', null, 'En «Clases», toca «✦ Crear clases con mi material»: elige los archivos de tu curso y se arman clases con ejercicios.'),
+        h('li', null, 'En «Calendario», dime cuántas horas quieres estudiar y reparto las clases en los días que quedan.'))),
+    h('p', {class:'tiny muted', style:'margin-top:22px'}, 'Privacidad: todo se guarda solo en este dispositivo y navegador. Nada se envía a ningún servidor de Calculai. Si conectas una IA, el material que elijas se envía directo a ese proveedor. Usa «Editar → Respaldo» para llevar tus datos a otro equipo.')));
+}
+/* Primera conexión con el script (sin materias todavía): lista tus cursos y trae los que elijas a la revisión. */
+function firstConnect(){
+  if (verLt(String(SYNC.agent), '1.1.1')){ openAutoSyncHelp(); toast('Actualiza el script de revisión para conectar desde aquí'); return; }
+  SYNC.first = true; requestWebcSync(true); render(); toast('Buscando tus cursos en WebC…');
+}
+function firstPicker(list){
+  const pick = new Set(list.map(c => c.id));
+  $('#drawer').classList.add('wide');
+  openDrawer(h('div', {class:'drawer-head'}, h('div', {style:'flex:1'}, h('h3', null, 'Tus cursos en WebC')), h('button', {class:'iconbtn', type:'button', 'aria-label':'Cerrar', onclick:closeDrawer}, '✕')),
+    h('div', {class:'drawer-body'},
+      h('p', {class:'tiny muted', style:'margin:0 0 10px'}, 'Elige los cursos que quieres estudiar con Calculai. Después revisas lo que llegó antes de guardarlo.'),
+      h('div', {class:'gen-list', style:'max-height:none'}, list.map(c => h('label', {class:'chk'}, h('input', {type:'checkbox', checked:true, onchange:e => { e.target.checked ? pick.add(c.id) : pick.delete(c.id); }}), h('span', null, c.name, ' ', h('small', {class:'muted'}, c.code || ''))))),
+      h('button', {class:'btn hlbtn', type:'button', style:'margin-top:12px', onclick:() => { if (!pick.size){ toast('Elige al menos un curso'); return; } closeDrawer(); SYNC.addCourses = [...pick]; SYNC.first = true; requestWebcSync(true, SYNC.addCourses); render(); toast('Leyendo tus cursos… puede tardar un minuto'); }}, 'Traer estos cursos')));
 }
 function startEmpty(){
   D = blankData(); P = blankProg();
@@ -390,10 +413,16 @@ function drawLinks(wrap, svgEl, ts){
     svgEl.append(svg('path', {d:`M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}`, class:W[st(pid)] >= 2 ? 'ready' : ''}));
   }));
 }
+/* Índice de una clase escrita en Calculai: un botón por cada «## sección» (desplaza sin cambiar la dirección). */
+function lessonToc(body){
+  const hs = body ? [...body.querySelectorAll('h4.lc-h')] : [];
+  if (hs.length < 3) return null;
+  return h('nav', {class:'lc-toc', 'aria-label':'Partes de la clase'}, hs.map(x => h('button', {class:'chip', type:'button', onclick:() => x.scrollIntoView({behavior:'smooth', block:'start'})}, x.textContent)));
+}
 function renderContent(txt){
   if (!txt) return null;
   const wrap = h('div', {class:'lesson-content'});
-  const blocks = txt.split(/\n{2,}/);
+  const blocks = txt.replace(/\r/g, '').split(/\n{2,}/).flatMap(b => { const m = b.match(/^(#{1,3} [^\n]*)\n([\s\S]+)$/); return m ? [m[1], m[2]] : [b]; });
   blocks.forEach(block => {
     const trimmed = block.trim();
     if (!trimmed) return;
@@ -574,7 +603,8 @@ function vClases(v){
   const t = lessonOpen && topic(lessonOpen);
   if (t){ vLesson(v, t); return; }
   lessonOpen = null;
-  v.append(h('div', {class:'sec-title'}, h('h2', null, 'Clases'), h('span', {class:'hand'}, 'todo se lee aquí mismo')));
+  v.append(h('div', {class:'sec-title'}, h('h2', null, 'Clases'), h('span', {class:'hand'}, 'todo se lee aquí mismo'),
+    h('button', {class:'btn small ai-btn', type:'button', style:'margin-left:auto', onclick:() => openGenerator()}, '✦ Crear clases con mi material')));
   const last = P.lastLesson && topic(P.lastLesson);
   const top = ranked()[0];
   const quick = h('div', {class:'cl-quick'},
@@ -604,7 +634,9 @@ function vClases(v){
     }));
     const sec = h('section', {class:'cl-sec'}, h('div', {class:'cl-sh'}, h('h3', {class:'display'}, s.name), h('span', {class:'tiny muted'}, `${nw} de ${ts.length} clases disponibles aquí`),
       h('button', {class:'btn ghost small', type:'button', onclick:() => openTopicForm(null, s.id)}, '+ Clase')),
-      ts.length ? grid : h('p', {class:'tiny muted'}, 'Esta materia todavía no tiene temas. Agrega uno con «+ Clase».'));
+      ts.length ? grid : h('div', {class:'card lp-empty'}, h('p', {style:'margin:0 0 4px'}, h('b', null, 'Esta materia todavía no tiene clases.')),
+        h('p', {class:'tiny muted', style:'margin:0 0 8px'}, webcFileRes(s.id).length ? `Tienes ${plural(webcFileRes(s.id).length, 'archivo', 'archivos')} de WebC en esta materia: puedo armar clases y ejercicios con ellos.` : 'Sube los PDF o presentaciones del curso y armo clases y ejercicios con ellos. También puedes escribirlas con «+ Clase».'),
+        h('button', {class:'btn small ai-btn', type:'button', onclick:() => openGenerator(s.id)}, '✦ Crear clases con mi material')));
     groups.push(sec); v.append(sec);
   });
   const none = h('p', {class:'tiny muted', hidden:true}, 'Ninguna clase coincide con la búsqueda.'); v.append(none);
@@ -634,7 +666,13 @@ function vLesson(v, t){
     h('div', {class:'ai-slot'})].filter(Boolean));
   const saved = hasSaved(t), fromClaude = /^https:\/\/claude\.ai\//.test(t.url || '');
   if (saved) ldbGet(t.url);
-  if (hasLesson(t)) page.append(h('article', {class:'card lp-body'}, saved ? h('p', {class:'kicker', style:'margin:0 0 8px'}, 'Mi texto (notas o versión adaptada)') : null, renderContent(t.content)));
+  if (hasLesson(t)){
+    const body = renderContent(t.content);
+    const h1 = body && body.firstElementChild; if (h1 && h1.tagName === 'H3' && norm(h1.textContent.trim()) === norm(t.title.trim())) h1.remove();
+    page.append(h('article', {class:'card lp-body'}, saved ? h('p', {class:'kicker', style:'margin:0 0 8px'}, 'Mi texto (notas o versión adaptada)') : null,
+      t.gen ? h('p', {class:'tiny note', style:'margin:0 0 10px'}, `Clase creada con IA el ${fmtD(parse(t.gen.at))} a partir de: ${(t.gen.from || []).join(', ') || 'tu material'}. Revísala con tus apuntes.`) : null,
+      lessonToc(body), body));
+  }
   if (saved) page.append(h('article', {class:'card lp-body lp-saved'}, savedFrame(t.url, t.title)));
   if (!hasLesson(t) && !saved) page.append(h('article', {class:'card lp-body'}, h('div', {class:'lp-empty'},
     h('p', {style:'margin:0 0 6px'}, h('b', null, fromClaude ? 'Esta clase está en claude.ai y todavía no está guardada en este dispositivo.' : 'Esta clase todavía no tiene texto en Calculai.')),
@@ -662,7 +700,7 @@ const AI_MODES = [
   {k:'errors', l:'Errores frecuentes', prompt:'Lista los errores más frecuentes en estos temas. Para cada uno: por qué ocurre, cómo detectarlo y cómo evitarlo.'},
   {k:'practice', l:'Ejercicios para practicar', prompt:'Crea 4 ejercicios de práctica de dificultad creciente sobre esta clase. Pon todas las soluciones al final, en una sección «Soluciones».'}
 ];
-const AI_DEFAULT_MODEL = {anthropic:'claude-haiku-5-5', openai:'gpt-4o-mini'};
+const AI_DEFAULT_MODEL = {anthropic:'claude-haiku-5-5', openai:'gpt-4o-mini', gemini:''}; // gemini: se elige solo según la key
 const lsGet = (k, d = '') => { try { return localStorage.getItem(k) ?? d; } catch { return d; } };
 const lsSet = (k, v) => { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch {} };
 const getAIKey = () => lsGet('calculai-ai-key');
@@ -670,25 +708,73 @@ const setAIKey = k => lsSet('calculai-ai-key', k);
 const getAIProvider = () => lsGet('calculai-ai-provider', 'anthropic');
 const setAIProvider = p => lsSet('calculai-ai-provider', p);
 const getAIModel = () => lsGet('calculai-ai-model') || AI_DEFAULT_MODEL[getAIProvider()] || '';
+/* Google: pregunta qué modelos permite la key y elige uno «flash» (rápido; es el que suele tener plan gratis). */
+async function geminiModel(key){
+  const saved = lsGet('calculai-ai-gauto'); if (saved) return saved;
+  const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', {headers:{'x-goog-api-key':key}});
+  if (!r.ok) throw new Error(r.status === 400 || r.status === 401 || r.status === 403 ? 'la API key no es válida' : `error ${r.status} al revisar la key`);
+  const all = ((await r.json()).models || []).filter(m => (m.supportedGenerationMethods || []).includes('generateContent') && /gemini/i.test(m.name));
+  const clean = all.filter(m => !/(image|tts|audio|live|embed|vision|exp|preview|thinking|learnlm|robotics|computer)/i.test(m.name));
+  const ver = m => parseFloat((m.name.match(/gemini-(\d+(?:\.\d+)?)/i) || [])[1] || 0);
+  const rank = m => (/flash/i.test(m.name) ? 2 : 0) - (/lite/i.test(m.name) ? 1 : 0);
+  const pick = (clean.length ? clean : all).sort((a, b) => rank(b) - rank(a) || ver(b) - ver(a))[0];
+  if (!pick) throw new Error('esa key no tiene modelos disponibles');
+  const name = pick.name.replace(/^models\//, ''); lsSet('calculai-ai-gauto', name); return name;
+}
 const setAIModel = m => lsSet('calculai-ai-model', m);
 
 function aiPrompt(mode, t, need){
   const base = mode ? mode.prompt : 'Adapta esta clase según lo que pide el estudiante.';
   return `${base}${need ? `\n\nLo que me cuesta o necesito: ${need}` : ''}\n\nReglas: responde en español; usa solo el contenido de la clase (si agregas algo que no está en ella, márcalo como «Complemento»); usa $…$ para fórmulas en línea y $$…$$ en bloques; usa # y ## para títulos.\n\n---\nClase «${t.title}»:\n\n${t.content || savedText(t) || '(La clase no tiene texto escrito en Calculai.' + (t.url ? ' Material: ' + t.url : '') + ')'}`;
 }
-async function callAI(prompt){
-  const key = getAIKey(), provider = getAIProvider(), model = getAIModel();
+async function callAI(prompt, opt = {}){
+  const key = getAIKey(), provider = getAIProvider(), max = opt.max || 4096;
   if (!key) throw new Error('NO_KEY');
+  const model = provider === 'gemini' ? (getAIModel() || await geminiModel(key)) : getAIModel();
   const sys = 'Eres un ayudante universitario. Respondes en español, con claridad y sin inventar contenido.';
   let r;
-  if (provider === 'anthropic'){
-    r = await fetch('https://api.anthropic.com/v1/messages', {method:'POST', headers:{'Content-Type':'application/json', 'x-api-key':key, 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true'}, body:JSON.stringify({model, max_tokens:4096, system:sys, messages:[{role:'user', content:prompt}]})});
-  } else {
-    r = await fetch('https://api.openai.com/v1/chat/completions', {method:'POST', headers:{'Content-Type':'application/json', 'Authorization':`Bearer ${key}`}, body:JSON.stringify({model, messages:[{role:'system', content:sys}, {role:'user', content:prompt}]})});
+  try {
+    if (provider === 'anthropic'){
+      r = await fetch('https://api.anthropic.com/v1/messages', {method:'POST', headers:{'Content-Type':'application/json', 'x-api-key':key, 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true'}, body:JSON.stringify({model, max_tokens:max, system:sys, messages:[{role:'user', content:prompt}]})});
+    } else if (provider === 'gemini'){
+      r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {method:'POST', headers:{'Content-Type':'application/json', 'x-goog-api-key':key}, body:JSON.stringify({systemInstruction:{parts:[{text:sys}]}, contents:[{role:'user', parts:[{text:prompt}]}], generationConfig:{maxOutputTokens:Math.max(max, 8192), ...(opt.json ? {responseMimeType:'application/json'} : {})}})});
+    } else {
+      r = await fetch('https://api.openai.com/v1/chat/completions', {method:'POST', headers:{'Content-Type':'application/json', 'Authorization':`Bearer ${key}`}, body:JSON.stringify({model, messages:[{role:'system', content:sys}, {role:'user', content:prompt}]})});
+    }
+  } catch { throw new Error('no hay conexión con el servicio de IA'); }
+  if (!r.ok){
+    const e = await r.text().catch(() => '');
+    if (provider === 'gemini' && r.status === 404) lsSet('calculai-ai-gauto', '');
+    throw new Error(r.status === 401 || (provider === 'gemini' && (r.status === 400 && /API_KEY|api key/i.test(e) || r.status === 403)) ? 'la API key no es válida'
+      : r.status === 429 ? 'llegaste al límite de uso de tu plan de IA; espera un minuto y vuelve a intentar'
+      : r.status === 404 ? `el modelo «${model}» no está disponible para esa cuenta` : `error ${r.status} ${e.slice(0, 120)}`);
   }
-  if (!r.ok){ const e = await r.text().catch(() => ''); throw new Error(r.status === 401 ? 'la API key no es válida' : r.status === 404 ? `el modelo «${model}» no existe para esa cuenta` : `error ${r.status} ${e.slice(0, 120)}`); }
   const j = await r.json();
-  return provider === 'anthropic' ? (j.content || []).map(c => c.text || '').join('') : j.choices[0].message.content;
+  const out = provider === 'anthropic' ? (j.content || []).map(c => c.text || '').join('')
+    : provider === 'gemini' ? ((j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts) || []).map(x => x.text || '').join('')
+    : ((j.choices && j.choices[0] && j.choices[0].message) || {}).content || '';
+  if (!out.trim()) throw new Error('la IA respondió vacío (puede ser un bloqueo de contenido o el límite de largo)');
+  return out;
+}
+/* Configuración de la IA (se usa en «Adapta esta clase» y en «Crear clases con mi material»). */
+const AI_PROV = {
+  gemini:{l:'Google · tiene plan gratis', help:['Crea una key gratis con tu cuenta de Google en ', ['https://aistudio.google.com/', 'Google AI Studio'], ' (botón «Get API key»). En el plan gratis hay un límite de uso por minuto y por día, y Google indica que puede usar lo que envías para mejorar sus productos: no pongas datos personales.']},
+  anthropic:{l:'Anthropic', help:['Requiere una cuenta de pago en la consola de desarrolladores de Anthropic.']},
+  openai:{l:'OpenAI', help:['Requiere una cuenta de pago en la plataforma de desarrolladores de OpenAI.']}
+};
+function aiConfigEl(onSaved){
+  const provSel = h('select', {class:'ai-prov-sel', 'aria-label':'Proveedor'}, Object.entries(AI_PROV).map(([k, o]) => h('option', {value:k, selected:getAIProvider() === k || null}, o.l)));
+  const keyIn = h('input', {type:'password', class:'ai-key-in', value:getAIKey(), placeholder:'Pega tu API key', 'aria-label':'API key', autocomplete:'off', spellcheck:'false'});
+  const modelIn = h('input', {type:'text', class:'ai-key-in', value:lsGet('calculai-ai-model') || AI_DEFAULT_MODEL[getAIProvider()] || '', placeholder:'automático', 'aria-label':'Modelo', style:'max-width:180px'});
+  const help = h('p', {class:'tiny muted', style:'margin:6px 0 0'});
+  const paintHelp = () => help.replaceChildren(...(AI_PROV[provSel.value] || AI_PROV.gemini).help.map(x => Array.isArray(x) ? h('a', {href:x[0], target:'_blank', rel:'noopener'}, x[1] + ' ↗') : x));
+  provSel.addEventListener('change', () => { modelIn.value = AI_DEFAULT_MODEL[provSel.value] || ''; paintHelp(); });
+  paintHelp();
+  return h('div', {class:'ai-config-body'},
+    h('p', {class:'tiny muted', style:'margin:0 0 8px'}, 'Usa tu propia API key. Se guarda solo en este navegador y lo que envías va directo al proveedor que elijas, sin pasar por otros servidores. Revisa los precios y límites en la página del proveedor.'),
+    h('div', {class:'ai-row'}, provSel, keyIn, modelIn,
+      h('button', {class:'btn ghost small', type:'button', onclick:() => { setAIProvider(provSel.value); setAIKey(keyIn.value.trim()); setAIModel(modelIn.value.trim()); lsSet('calculai-ai-gauto', ''); toast(keyIn.value.trim() ? 'IA conectada' : 'API key eliminada'); onSaved && onSaved(); }}, 'Guardar')),
+    help);
 }
 
 function openAIPanel(t, host){
@@ -699,19 +785,10 @@ function openAIPanel(t, host){
   const statusEl = h('div', {class:'ai-status tiny muted', role:'status'});
   const need = h('textarea', {class:'ai-need', rows:2, placeholder:'Ej.: no entiendo cuándo usar cada fórmula · me pierdo con los signos · necesito algo rápido antes de la prueba'});
 
-  const provSel = h('select', {class:'ai-prov-sel', 'aria-label':'Proveedor'},
-    h('option', {value:'anthropic', selected:getAIProvider() === 'anthropic' || null}, 'Anthropic (Claude)'),
-    h('option', {value:'openai', selected:getAIProvider() === 'openai' || null}, 'OpenAI'));
-  const keyIn = h('input', {type:'password', class:'ai-key-in', value:getAIKey(), placeholder:'Pega tu API key', 'aria-label':'API key', autocomplete:'off'});
-  const modelIn = h('input', {type:'text', class:'ai-key-in', value:getAIModel(), 'aria-label':'Modelo', style:'max-width:180px'});
-  provSel.addEventListener('change', () => { setAIProvider(provSel.value); setAIModel(''); modelIn.value = getAIModel(); });
   const configEl = h('details', {class:'ai-config', open:!getAIKey() || null},
     h('summary', null, getAIKey() ? '⚙ Configuración de IA (conectada)' : '⚙ Conectar una IA (opcional)'),
-    h('div', {class:'ai-config-body'},
-      h('p', {class:'tiny muted', style:'margin:0 0 8px'}, 'Usa tu propia API key. Se guarda solo en este navegador y la clase se envía directo al proveedor que elijas, sin pasar por otros servidores. El proveedor cobra según su tarifa vigente: revisa su página de precios.'),
-      h('div', {class:'ai-row'}, provSel, keyIn, modelIn,
-        h('button', {class:'btn ghost small', type:'button', onclick:() => { setAIKey(keyIn.value.trim()); setAIModel(modelIn.value.trim()); toast(keyIn.value.trim() ? 'IA conectada' : 'API key eliminada'); openAIPanel(t, host); }}, 'Guardar')),
-      h('p', {class:'tiny muted', style:'margin:8px 0 0'}, 'Sin API key igual funciona: cada botón copia una instrucción lista para pegar en el asistente de IA que ya uses.')));
+    aiConfigEl(() => openAIPanel(t, host)),
+    h('p', {class:'tiny muted', style:'margin:8px 0 0'}, 'Sin API key igual funciona: cada botón copia una instrucción lista para pegar en el asistente de IA que ya uses.'));
 
   const run = async mode => {
     const prompt = aiPrompt(mode, t, need.value.trim());
@@ -1283,6 +1360,300 @@ function vBiblio(v){
 }
 
 /* =========================================================
+   GENERADOR DE CLASES — clases y ejercicios hechos con el material del curso
+   Lee archivos (PDF, PowerPoint .pptx, Word .docx, texto) que la persona sube o que el script trae de
+   WebC, y una IA escribe clases en el formato de Calculai: objetivo, mapa, teoría, fórmulas, procedimiento,
+   ejemplos, errores típicos, ejercicios con soluciones y verificación de dominio. Sin API key, se copia
+   una instrucción para pegar en cualquier asistente y se pega la respuesta de vuelta.
+   Crea temas (D.topics con content y gen) y ejercicios (D.items). No toca la sincronización.
+   ========================================================= */
+const MAT_MAX_FILE = 30e6, MAT_MAX_CHARS = 90000, GEN_MAX_CLASSES = 8;
+let pdfjsP = null;
+function loadPdfjs(){
+  if (!pdfjsP) pdfjsP = import(new URL('vendor/pdfjs/pdf.min.mjs', location.href).href)
+    .then(m => { m.GlobalWorkerOptions.workerSrc = new URL('vendor/pdfjs/pdf.worker.min.mjs', location.href).href; return m; })
+    .catch(e => { pdfjsP = null; throw new Error('no pude cargar el lector de PDF (' + (e && e.message || e) + ')'); });
+  return pdfjsP;
+}
+async function pdfPages(buf){
+  const pdfjs = await loadPdfjs();
+  const task = pdfjs.getDocument({data:new Uint8Array(buf), isEvalSupported:false, disableFontFace:true, enableXfa:false});
+  const pages = [];
+  try {
+    const doc = await task.promise;
+    for (let i = 1; i <= doc.numPages; i++){
+      const tc = await (await doc.getPage(i)).getTextContent();
+      pages.push(tc.items.map(it => (it.str || '') + (it.hasEOL ? '\n' : ' ')).join('').replace(/[ \t]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim());
+    }
+  } finally { task.destroy(); }
+  return pages;
+}
+/* Lector mínimo de .zip (los .pptx y .docx son zip) con la descompresión del propio navegador. */
+async function unzipText(buf, want){
+  const u8 = new Uint8Array(buf), dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength), dec = new TextDecoder();
+  let eocd = -1; for (let i = u8.length - 22; i >= Math.max(0, u8.length - 65557); i--){ if (dv.getUint32(i, true) === 0x06054b50){ eocd = i; break; } }
+  if (eocd < 0) throw new Error('el archivo está dañado o no es de Office');
+  const out = {}; let p = dv.getUint32(eocd + 16, true); const count = dv.getUint16(eocd + 10, true);
+  for (let n = 0; n < count && p + 46 <= u8.length && dv.getUint32(p, true) === 0x02014b50; n++){
+    const method = dv.getUint16(p + 10, true), csize = dv.getUint32(p + 20, true), nlen = dv.getUint16(p + 28, true), xlen = dv.getUint16(p + 30, true), clen = dv.getUint16(p + 32, true), lo = dv.getUint32(p + 42, true);
+    const name = dec.decode(u8.subarray(p + 46, p + 46 + nlen)); p += 46 + nlen + xlen + clen;
+    if (!want(name) || dv.getUint32(lo, true) !== 0x04034b50) continue;
+    const start = lo + 30 + dv.getUint16(lo + 26, true) + dv.getUint16(lo + 28, true), data = u8.subarray(start, start + csize);
+    if (method === 0) out[name] = dec.decode(data);
+    else if (method === 8) out[name] = dec.decode(new Uint8Array(await new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer()));
+  }
+  return out;
+}
+const xmlDecode = x => x.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16))).replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(+n)).replace(/&amp;/g, '&');
+function ooxmlText(xml, t, para){
+  const tRe = new RegExp(`<${t}(?:\\s[^>]*)?>([^<]*)</${t}>`, 'g');
+  return xml.split(`</${para}>`).map(seg => { let m, o = ''; tRe.lastIndex = 0; while ((m = tRe.exec(seg))) o += xmlDecode(m[1]); return o; }).filter(x => x.trim()).join('\n');
+}
+async function readMaterial(name, buf, ctype = ''){
+  if (buf.byteLength > MAT_MAX_FILE) throw new Error('es muy grande (máximo 30 MB)');
+  const ext = ((name.match(/\.(\w+)$/) || [])[1] || '').toLowerCase(), u8 = new Uint8Array(buf);
+  const sig = String.fromCharCode(...u8.subarray(0, 4));
+  let pages;
+  if (sig === '%PDF' || ext === 'pdf') pages = await pdfPages(buf);
+  else if (sig.startsWith('PK') && (ext === 'pptx' || ext === 'docx' || !ext || /officedocument/.test(ctype))){
+    const files = await unzipText(buf, n => /^ppt\/slides\/slide\d+\.xml$/.test(n) || n === 'word/document.xml');
+    const slides = Object.keys(files).filter(n => n.startsWith('ppt/')).sort((a, b) => +a.match(/\d+/)[0] - +b.match(/\d+/)[0]);
+    if (slides.length) pages = slides.map(n => ooxmlText(files[n], 'a:t', 'a:p'));
+    else if (files['word/document.xml']){ const all = ooxmlText(files['word/document.xml'], 'w:t', 'w:p'); pages = all.match(/[\s\S]{1,3500}(?:\n|$)/g) || [all]; }
+    else throw new Error('no encontré texto dentro (¿es un PowerPoint o Word moderno?)');
+  } else if (/^(ppt|doc|xls)$/.test(ext)) throw new Error(`es un formato antiguo (.${ext}): guárdalo como .${ext}x o PDF`);
+  else if (/^(txt|md|csv|tex)$/.test(ext) || /^text\/plain/.test(ctype)) pages = [new TextDecoder().decode(u8)];
+  else if (/^html?$/.test(ext) || /html/.test(ctype)){ const d = new DOMParser().parseFromString(new TextDecoder().decode(u8), 'text/html'); d.querySelectorAll('script,style,nav,header,footer').forEach(x => x.remove()); pages = [((d.querySelector('#region-main, main') || d.body || {}).textContent || '').replace(/\n\s*\n+/g, '\n\n')]; }
+  else throw new Error(`no sé leer archivos .${ext || 'sin extensión'} (usa PDF, .pptx, .docx o texto)`);
+  pages = pages.map(x => String(x || '').trim());
+  const chars = pages.reduce((a, x) => a + x.length, 0);
+  if (chars < 150) throw new Error('casi no tiene texto: si es un escaneo o solo imágenes, no lo puedo leer');
+  return {name, pages, chars};
+}
+/* Texto del material con marcas [archivo, p. N]; si es muy largo, se recorta parejo entre archivos. */
+function matText(mats){
+  const total = mats.reduce((a, m) => a + m.chars, 0), ratio = Math.min(1, MAT_MAX_CHARS / Math.max(1, total));
+  let cut = false;
+  const txt = mats.map(m => {
+    let budget = Math.floor(m.chars * ratio), o = `\n### Archivo: ${m.name}\n`;
+    for (let i = 0; i < m.pages.length && budget > 0; i++){ const pg = m.pages[i].slice(0, budget); budget -= pg.length; if (pg) o += `\n[${m.name}, p. ${i + 1}]\n${pg}\n`; }
+    if (ratio < 1) cut = true;
+    return o;
+  }).join('');
+  return {txt, cut};
+}
+/* Archivos de WebC: los trae el script de revisión (v1.2+) con tu sesión. */
+const fileWaits = {};
+function fetchWebcFile(url){
+  return new Promise((resolve, reject) => {
+    if (!SYNC.agent) return reject(new Error('NO_AGENT'));
+    if (verLt(String(SYNC.agent), '1.2.0')) return reject(new Error('OLD_AGENT'));
+    const id = uid('f'), t = setTimeout(() => { delete fileWaits[id]; reject(new Error('WebC no respondió a tiempo')); }, 90000);
+    fileWaits[id] = {resolve:v => { clearTimeout(t); resolve(v); }, reject:e => { clearTimeout(t); reject(e); }};
+    window.postMessage({type:'calculai-file-request', id, url}, location.origin);
+  });
+}
+window.addEventListener('message', ev => {
+  const d = ev.data; if (!d || typeof d !== 'object' || d.type !== 'calculai-file' || ev.origin !== location.origin || ev.source !== window) return;
+  const w = fileWaits[d.id]; if (!w) return; delete fileWaits[d.id];
+  if (d.ok && d.buf instanceof ArrayBuffer) w.resolve({name:String(d.name || 'archivo'), ctype:String(d.ctype || ''), buf:d.buf}); else w.reject(new Error(d.msg || 'no se pudo traer el archivo'));
+});
+const webcFileRes = sid => D.resources.filter(r => r.subj === sid && /^https:\/\/[^/]+\/mod\/(resource|page)\/view\.php\?id=\d+/.test(r.url || ''));
+
+/* Instrucciones para la IA */
+function genPlanPrompt(subj, mt){
+  return `Eres ayudante de la asignatura «${subj.name}». Abajo está el material del curso, con marcas [archivo, p. N].\n\nDivide este material en clases de estudio de 45 a 60 minutos, en el orden en que conviene aprenderlas (de lo básico a lo avanzado). Cada clase enseña pocos conceptos relacionados. Máximo ${GEN_MAX_CLASSES} clases.\n\nResponde SOLO con JSON válido, sin texto antes ni después:\n{"clases":[{"titulo":"…","cubre":"qué conceptos y procedimientos enseña, en una o dos frases","fuente":"archivo y páginas"}]}\n\nUsa solo lo que está en el material; no agregues temas que no aparecen.\n\n---\nMATERIAL\n${mt}`;
+}
+const GEN_FORMAT = `Formato (usa exactamente estos títulos, en este orden):
+# (título de la clase)
+## Objetivo
+Una o dos frases: qué vas a poder hacer al terminar.
+## Mapa
+Qué necesitas saber antes y cómo se conecta con lo que viene (lista corta).
+## Teoría
+Primero la intuición, después la definición formal.
+## Fórmulas
+Cada fórmula en su propio párrafo $$…$$; debajo, qué significa cada símbolo, sus unidades si corresponde y cuándo se puede usar.
+## Procedimiento
+Pasos numerados para resolver los ejercicios típicos.
+## Ejemplos resueltos
+Dos o tres, de menor a mayor dificultad, paso a paso. Si el material trae ejemplos o ejercicios, úsalos primero.
+## Errores típicos
+Lista: el error, por qué pasa y cómo evitarlo.
+## Ejercicios
+Cuatro a seis ejercicios graduados, SIN soluciones aquí.
+## Soluciones
+Las soluciones de los ejercicios, con el desarrollo.
+## Verificación de dominio
+Tres preguntas cortas para saber si dominas el tema.
+
+Reglas:
+- Español de Chile, claro y sin relleno. Escribe como un buen ayudante universitario.
+- Usa solo el contenido del material. Si agregas algo que no está en él, márcalo con «(Complemento)».
+- Si una sección no aplica (por ejemplo, no hay fórmulas), escribe una línea que lo diga.
+- Fórmulas: $…$ en línea y $$…$$ en bloque, en su propio párrafo. Sin tablas ni HTML.
+- Separa los párrafos con una línea en blanco. Listas con «- » o «1. ».
+- Al final de la clase agrega un bloque para practicar en la app, exactamente así:
+\`\`\`ejercicios
+[{"tipo":"alternativas","pregunta":"…","opciones":["…","…","…","…"],"correcta":0,"explicacion":"…"},
+ {"tipo":"numerica","pregunta":"…","respuesta":12.5,"tolerancia":0.01,"unidad":"m/s","explicacion":"…"}]
+\`\`\`
+  Entre 4 y 8 ejercicios con respuesta correcta y verificable. «correcta» es la posición de la opción correcta contando desde 0. «tolerancia» es relativa (0.01 = 1 %).`;
+function genClassPrompt(subj, plan, i, mt){
+  const c = plan[i], before = plan.slice(0, i).map(x => x.titulo).join('; '), after = plan.slice(i + 1).map(x => x.titulo).join('; ');
+  return `Escribe la clase ${i + 1} de ${plan.length} de la asignatura «${subj.name}»: «${c.titulo}».\nDebe cubrir: ${c.cubre || c.titulo}.${c.fuente ? `\nFuente sugerida: ${c.fuente}.` : ''}${before ? `\nClases anteriores (no las repitas): ${before}.` : ''}${after ? `\nClases siguientes (no adelantes su contenido): ${after}.` : ''}\n\n${GEN_FORMAT}\n\n---\nMATERIAL\n${mt}`;
+}
+function genAllPrompt(subj, mt){
+  return `Eres ayudante de la asignatura «${subj.name}». Con el material de abajo (marcas [archivo, p. N]), arma clases de estudio de 45 a 60 minutos, en el orden en que conviene aprenderlas. Máximo ${GEN_MAX_CLASSES} clases. Escríbelas TODAS, una tras otra, cada una completa y con su propio bloque de ejercicios al final.\n\n${GEN_FORMAT}\n\nSi tu respuesta se corta, termina la clase que estabas escribiendo y espera a que te pidan «continúa».\n\n---\nMATERIAL\n${mt}`;
+}
+/* Respuesta de la IA → clases {title, content, items} */
+function genItem(x){
+  if (!x || typeof x !== 'object' || !x.pregunta) return null;
+  const q = String(x.pregunta).slice(0, 1500), ex = String(x.explicacion || '').slice(0, 2000);
+  if (Array.isArray(x.opciones) || /altern|mc|multiple/i.test(String(x.tipo || ''))){
+    const opts = (x.opciones || []).map(o => String(o).slice(0, 500)).filter(Boolean).slice(0, 6), ans = Number(x.correcta);
+    if (opts.length < 2 || !Number.isInteger(ans) || ans < 0 || ans >= opts.length) return null;
+    return {type:'mc', q, opts, ans, ex};
+  }
+  const ans = typeof x.respuesta === 'number' ? x.respuesta : parseNum(x.respuesta == null ? '' : x.respuesta);
+  if (ans == null || !Number.isFinite(ans)) return null;
+  const tol = Number(x.tolerancia);
+  return {type:'num', q, ans, tol:Number.isFinite(tol) && tol > 0 && tol <= .2 ? tol : .01, unit:String(x.unidad || '').slice(0, 30), ex};
+}
+function parseLessons(text){
+  text = String(text || '').replace(/\r/g, '');
+  /* Algunas IA envuelven toda la respuesta en ```markdown … ```: se quita solo ese envoltorio, no los bloques internos. */
+  if (/^\s*```(?:markdown|md)?[ \t]*\n\s*#/.test(text)) text = text.replace(/^\s*```(?:markdown|md)?[ \t]*\n/, '').replace(/\n```\s*$/, '');
+  return text.split(/\n(?=# [^#])/).map(x => x.trim()).filter(x => /^# \S/.test(x)).map(part => {
+    let items = [];
+    part = part.replace(/```[ \t]*(?:ejercicios|json)[ \t]*\n([\s\S]*?)```/gi, (_, js) => { try { const a = JSON.parse(js.trim()); if (Array.isArray(a)) items = items.concat(a); } catch {} return ''; });
+    const title = part.match(/^# (.+)/)[1].replace(/^clase\s*\d+\s*[:.\-–]\s*/i, '').trim().slice(0, 140);
+    return {title, content:part.replace(/^# .+/, '# ' + title).replace(/\n{3,}/g, '\n\n').trim(), items:items.map(genItem).filter(Boolean)};
+  }).filter(L => L.content.length > 200);
+}
+function parsePlan(text){
+  const m = String(text || '').match(/\{[\s\S]*\}/); if (!m) throw new Error('la IA no devolvió la lista de clases');
+  const j = JSON.parse(m[0]), list = (j.clases || j.classes || []).filter(c => c && c.titulo).slice(0, GEN_MAX_CLASSES);
+  if (!list.length) throw new Error('la IA no propuso clases');
+  return list.map(c => ({titulo:String(c.titulo).slice(0, 140), cubre:String(c.cubre || '').slice(0, 400), fuente:String(c.fuente || '').slice(0, 200), on:true}));
+}
+function addGenerated(sid, lessons, from, prevId){
+  const used = topicsOf(sid).map(t => +((t.code || '').match(/^C(\d+)$/) || [])[1] || 0);
+  let n = Math.max(0, ...used), prev = prevId && topic(prevId) ? prevId : null; const made = [];
+  lessons.forEach(L => {
+    n++;
+    const t = {id:uid('t'), subj:sid, code:'C' + pad(n), title:L.title, scope:'actual', prio:'2', pre:prev ? [prev] : [], content:L.content, gen:{at:iso(TODAY), from:from.slice(0, 8)}};
+    D.topics.push(t); prev = t.id; made.push(t);
+    L.items.forEach(it => D.items.push({id:uid('q'), topic:t.id, ...it, origin:'Creado con IA a partir de tu material'}));
+  });
+  save();
+  return made;
+}
+
+/* Panel «Crear clases con mi material» */
+let GEN = null;
+function openGenerator(sid){
+  sid = sid || (classSubj !== 'todas' ? classSubj : D.subjects[0] && D.subjects[0].id);
+  if (!GEN || GEN.sid !== sid || GEN.done) GEN = {sid, pick:{}, local:[], mats:[], errs:[], plan:null, busy:'', made:[]};
+  $('#drawer').classList.add('wide');
+  openDrawer(h('div', {class:'drawer-head'}, h('div', {style:'flex:1'}, h('h3', null, '✦ Crear clases con mi material')), h('button', {class:'iconbtn', type:'button', 'aria-label':'Cerrar', onclick:closeDrawer}, '✕')),
+    h('div', {class:'drawer-body', id:'genBody'}));
+  drawGen();
+}
+function drawGen(){
+  const body = document.getElementById('genBody'); if (!body || !GEN) return;
+  const G = GEN, subj = S(G.sid), res = webcFileRes(G.sid), busy = !!G.busy;
+  const status = h('p', {class:'tiny gen-status', role:'status'}, G.busy || '');
+  const steps = [];
+  steps.push(h('label', {class:'field'}, h('span', null, 'Materia'),
+    h('select', {disabled:busy || null, onchange:e => { GEN = null; openGenerator(e.target.value); }}, D.subjects.map(sb => { const o = h('option', {value:sb.id}, sb.name); if (sb.id === G.sid) o.selected = true; return o; }))));
+  /* 1. Material */
+  const agentOk = SYNC.agent && !verLt(String(SYNC.agent), '1.2.0');
+  const fileIn = h('input', {type:'file', multiple:true, accept:'.pdf,.pptx,.docx,.txt,.md,application/pdf', style:'display:none', onchange:e => { G.local.push(...[...e.target.files].slice(0, 12)); e.target.value = ''; G.mats = []; G.plan = null; drawGen(); }});
+  steps.push(h('section', {class:'gen-step'}, h('h4', null, '1. Elige el material'),
+    res.length ? h('div', null,
+      h('p', {class:'tiny muted', style:'margin:0 0 6px'}, agentOk ? 'Archivos de esta materia en WebC (los trae el script con tu sesión):' : 'Archivos de esta materia en WebC:'),
+      h('div', {class:'gen-list'}, res.slice(0, 60).map(r => h('label', {class:'chk'}, h('input', {type:'checkbox', disabled:!agentOk || busy || null, checked:G.pick[r.id] || null, onchange:e => { G.pick[r.id] = e.target.checked; G.mats = []; G.plan = null; }}), h('span', null, r.title, ' ', h('small', {class:'muted'}, r.kind || ''))))),
+      !agentOk ? h('p', {class:'tiny note', style:'margin:6px 0 0'}, SYNC.agent ? 'Para traerlos directo de WebC, actualiza el script de revisión (versión 1.2 o más nueva).' : 'Para traerlos directo de WebC necesitas el script de revisión (Editar → Revisión automática). También puedes abrirlos en WebC, descargarlos y subirlos aquí.') : null)
+      : h('p', {class:'tiny muted', style:'margin:0 0 6px'}, 'Esta materia no tiene archivos de WebC guardados. Sube aquí los PDF o presentaciones del curso.'),
+    h('div', {class:'ai-row', style:'margin-top:8px'}, h('button', {class:'btn ghost small', type:'button', disabled:busy || null, onclick:() => fileIn.click()}, '⇪ Subir archivos'), h('span', {class:'tiny muted'}, 'PDF, PowerPoint (.pptx), Word (.docx) o texto'), fileIn),
+    G.local.length ? h('div', {class:'gen-list'}, G.local.map((f, i) => h('div', {class:'chk'}, h('span', null, '📄 ', f.name, ' ', h('small', {class:'muted'}, Math.round(f.size / 1024) + ' KB')), busy ? null : h('button', {class:'linkbtn', type:'button', onclick:() => { G.local.splice(i, 1); G.mats = []; G.plan = null; drawGen(); }}, 'quitar')))) : null,
+    h('div', {style:'margin-top:10px'}, h('button', {class:'btn small', type:'button', disabled:busy || null, onclick:genRead}, G.mats.length ? '↻ Volver a leer' : 'Leer material')),
+    G.mats.length ? h('ul', {class:'tiny gen-read'}, G.mats.map(m => h('li', null, `✓ ${m.name}: ${plural(m.pages.length, 'página', 'páginas')}, ${m.chars >= 1000 ? Math.round(m.chars / 1000) + ' mil' : m.chars} caracteres`))) : null,
+    G.errs.length ? h('ul', {class:'tiny gen-err'}, G.errs.map(e => h('li', null, '✗ ' + e))) : null));
+  /* 2. Clases */
+  if (G.mats.length){
+    const mt = matText(G.mats), key = getAIKey();
+    const two = h('section', {class:'gen-step'}, h('h4', null, '2. Arma las clases'),
+      mt.cut ? h('p', {class:'tiny note', style:'margin:0 0 8px'}, 'El material es largo: usaré una parte de cada archivo. Para cubrir todo, crea las clases en dos tandas, con menos archivos cada vez.') : null);
+    if (key){
+      if (!G.plan) two.append(h('p', {class:'tiny muted', style:'margin:0 0 8px'}, `Primero propongo la lista de clases (máximo ${GEN_MAX_CLASSES}) y tú eliges cuáles crear.`),
+        h('button', {class:'btn small hlbtn', type:'button', disabled:busy || null, onclick:genPlan}, '✦ Proponer clases'));
+      else {
+        two.append(h('div', {class:'gen-list'}, G.plan.map((c, i) => h('label', {class:'chk gen-plan'}, h('input', {type:'checkbox', checked:c.on || null, disabled:busy || null, onchange:e => { c.on = e.target.checked; }}),
+          h('span', null, h('b', null, `${i + 1}. `), h('input', {type:'text', value:c.titulo, disabled:busy || null, 'aria-label':'Título de la clase', onchange:e => { c.titulo = e.target.value.trim() || c.titulo; }}), h('small', {class:'muted', style:'display:block'}, c.cubre))))),
+          h('div', {class:'ai-row', style:'margin-top:8px'}, h('button', {class:'btn small hlbtn', type:'button', disabled:busy || null, onclick:genBuild}, '✦ Crear las clases elegidas'), h('button', {class:'btn ghost small', type:'button', disabled:busy || null, onclick:() => { G.plan = null; drawGen(); }}, 'Proponer de nuevo')));
+      }
+    } else {
+      const ans = h('textarea', {class:'ai-need', rows:6, placeholder:'Pega aquí la respuesta completa de tu asistente (todas las clases).'});
+      two.append(h('p', {class:'tiny muted', style:'margin:0 0 8px'}, 'Sin API key: copia la instrucción (incluye tu material), pégala en el asistente de IA que uses y pega aquí su respuesta. Si se corta, pídele «continúa» y pega todo junto.'),
+        h('div', {class:'ai-row'}, h('button', {class:'btn small', type:'button', onclick:async () => { const pr = genAllPrompt(subj, mt.txt); try { await navigator.clipboard.writeText(pr); toast('Instrucción copiada: pégala en tu asistente'); } catch { ans.value = pr; ans.select(); toast('Copia el texto del cuadro'); } }}, '⧉ Copiar instrucción')),
+        ans, h('div', {class:'ai-row', style:'margin-top:8px'}, h('button', {class:'btn small hlbtn', type:'button', onclick:() => { const L = parseLessons(ans.value); if (!L.length){ toast('No encontré clases: cada una debe empezar con «# título»', 4000); return; } genFinish(L); }}, 'Crear clases con la respuesta')));
+    }
+    two.append(h('details', {class:'gen-ai', open:!key || null}, h('summary', {class:'tiny'}, key ? '⚙ IA conectada · cambiar' : '⚙ Conectar una IA para crearlas automáticamente'), aiConfigEl(() => drawGen())));
+    steps.push(two);
+  }
+  if (G.made.length) steps.push(h('section', {class:'gen-step done'}, h('h4', null, `✓ ${plural(G.made.length, 'clase creada', 'clases creadas')}`),
+    h('ul', {class:'tiny'}, G.made.map(t => h('li', null, `${t.code} · ${t.title} (${plural(D.items.filter(i => i.topic === t.id).length, 'ejercicio', 'ejercicios')})`))),
+    h('p', {class:'tiny muted'}, 'Las hizo una IA con tu material: revísalas con tus apuntes antes de una prueba. Puedes editarlas con «✎ Editar mi texto».'),
+    h('button', {class:'btn small', type:'button', onclick:() => { classSubj = G.sid; closeDrawer(); lessonOpen = null; go('clases'); }}, 'Ver mis clases')));
+  steps.push(status);
+  body.replaceChildren(...steps);
+}
+async function genRead(){
+  const G = GEN, res = webcFileRes(G.sid).filter(r => G.pick[r.id]);
+  if (!res.length && !G.local.length){ toast('Elige o sube al menos un archivo'); return; }
+  G.mats = []; G.errs = []; G.plan = null;
+  const jobs = [...res.map(r => ({name:r.title, get:async () => { const f = await fetchWebcFile(r.url); return {name:f.name || r.title, buf:f.buf, ctype:f.ctype}; }})),
+    ...G.local.map(f => ({name:f.name, get:async () => ({name:f.name, buf:await f.arrayBuffer(), ctype:f.type})}))];
+  for (let i = 0; i < jobs.length; i++){
+    G.busy = `Leyendo ${i + 1} de ${jobs.length}: ${jobs[i].name}…`; drawGen();
+    try { const f = await jobs[i].get(); G.mats.push(await readMaterial(f.name, f.buf, f.ctype)); }
+    catch (e) { const m = e && e.message || String(e); G.errs.push(`${jobs[i].name}: ${m === 'NO_AGENT' || m === 'OLD_AGENT' ? 'necesito el script de revisión actualizado para traerlo de WebC' : m}`); }
+  }
+  G.busy = ''; drawGen();
+}
+async function aiRetry(prompt, opt){
+  try { return await callAI(prompt, opt); }
+  catch (e) { if (!/límite/.test(e.message)) throw e; GEN.busy = 'Llegué al límite de uso por minuto de la IA. Espero 40 segundos y sigo…'; drawGen(); await new Promise(r => setTimeout(r, 40000)); return callAI(prompt, opt); }
+}
+async function genPlan(){
+  const G = GEN; G.busy = 'Leyendo el material y proponiendo clases… (puede tardar un minuto)'; drawGen();
+  try { G.plan = parsePlan(await aiRetry(genPlanPrompt(S(G.sid), matText(G.mats).txt), {max:4000, json:true})); }
+  catch (e) { toast('No se pudo: ' + (e.message === 'NO_KEY' ? 'falta la API key' : e.message), 5000); }
+  G.busy = ''; drawGen();
+}
+async function genBuild(){
+  const G = GEN, plan = G.plan.filter(c => c.on); if (!plan.length){ toast('Elige al menos una clase'); return; }
+  const mt = matText(G.mats).txt, from = G.mats.map(m => m.name);
+  for (let i = 0; i < plan.length; i++){
+    G.busy = `Escribiendo la clase ${i + 1} de ${plan.length}: ${plan[i].titulo}… (cada una tarda alrededor de un minuto)`; drawGen();
+    try {
+      const L = parseLessons(await aiRetry(genClassPrompt(S(G.sid), plan, i, mt), {max:16000}))[0];
+      if (!L) throw new Error('la respuesta no tenía el formato esperado');
+      L.title = plan[i].titulo; L.content = L.content.replace(/^# .+/, '# ' + L.title);
+      G.made.push(...addGenerated(G.sid, [L], from, G.made.length ? G.made.at(-1).id : null));
+    } catch (e) { toast(`Clase ${i + 1}: ${e.message === 'NO_KEY' ? 'falta la API key' : e.message}`, 5000); if (e.message === 'NO_KEY' || /no es válida/.test(e.message)) break; }
+  }
+  G.busy = ''; G.done = true; drawGen(); render();
+  if (G.made.length) toast(`${plural(G.made.length, 'clase creada', 'clases creadas')} en ${S(G.sid).short}`, 4000);
+}
+function genFinish(L){
+  const G = GEN; G.made.push(...addGenerated(G.sid, L.slice(0, 20), G.mats.map(m => m.name))); G.done = true; drawGen(); render();
+  toast(`${plural(L.length, 'clase creada', 'clases creadas')} en ${S(G.sid).short}`, 4000);
+}
+
+/* =========================================================
    EDITAR: materias, evaluaciones, temas, ejercicios, recursos
    ========================================================= */
 function openDrawer(...kids){ const d = $('#drawer'); d.replaceChildren(...kids); d.classList.add('open'); d.setAttribute('aria-hidden', 'false'); $('#scrim').classList.add('on'); setTimeout(() => d.querySelector('input,select,textarea,button')?.focus(), 60); }
@@ -1756,7 +2127,7 @@ function applyWebc(){
 const SYNC = {agent:null, agentWhy:'', webc:'idle', webcMsg:'', outlook:'idle', outlookMsg:'', lastPayload:null};
 const STALE_MIN = 15;
 const USERSCRIPT_URL = APP_BASE + 'calculai-sync.user.js';
-const SCRIPT_V = '1.1.1'; // versión publicada de calculai-sync.user.js (súbela junto con @version del script)
+const SCRIPT_V = '1.2.0'; // versión publicada de calculai-sync.user.js (súbela junto con @version del script)
 const verLt = (a, b) => { const x = a.split('.').map(Number), y = b.split('.').map(Number); for (let i = 0; i < 3; i++){ if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) < (y[i] || 0); } return false; };
 function syncData(){ D.sync = D.sync || {}; for (const k of ['inbox', 'dismissed', 'ignoredCourses']) if (!Array.isArray(D.sync[k])) D.sync[k] = []; return D.sync; }
 const minsSince = s => s ? (Date.now() - new Date(s).getTime()) / 60000 : Infinity;
@@ -1764,7 +2135,7 @@ function agoMin(s){ const m = minsSince(s); if (!isFinite(m)) return 'nunca'; if
 const webcBase = () => (D.sync && D.sync.webc && D.sync.webc.origin) || 'https://webc.uai.cl';
 
 function requestWebcSync(force, extraCourses = []){
-  if (!SYNC.agent || !D.subjects.length) return false;
+  if (!SYNC.agent || (!D.subjects.length && !SYNC.first)) return false;
   if (SYNC.webc === 'checking' || SYNC.webc === 'reading') return false;
   if (!force && minsSince(D.sync && D.sync.webc && D.sync.webc.at) < STALE_MIN) return false;
   SYNC.webc = 'checking'; SYNC.webcMsg = ''; SYNC.startAt = Date.now(); SYNC.ack = false; paintSync();
@@ -1809,6 +2180,13 @@ function addToInbox(x){
 function applyAutoWebc(d){
   clearTimeout(SYNC._t);
   SYNC.lastPayload = d;
+  if (SYNC.first && !D.subjects.length && !SYNC.addCourses){
+    SYNC.webc = 'ok'; render();
+    const list = (d.unlinked || []).concat((d.courses || []).map(c => ({id:c.id, name:c.name, code:c.code})));
+    if (list.length) firstPicker(list); else { SYNC.first = false; toast('No encontré cursos en tu WebC', 4000); }
+    return;
+  }
+  SYNC.first = false;
   const W2 = prepareWebc(d), sd = syncData();
   const known = new Set((D.news || []).map(n => n.id));
   let nE = 0, nU = 0, nR = 0, nN = 0, nS = 0, nC = 0;
@@ -2079,7 +2457,8 @@ function autoSyncSteps(){
       h('b', null, 'Qué se actualiza solo'), h('ul', {class:'tiny', style:'margin:6px 0 0;padding-left:18px'},
         h('li', null, 'Fechas del calendario de WebC de tus cursos (entregas, controles): se agregan o se corrigen si cambiaron. Si borras una, no vuelve a aparecer.'),
         h('li', null, 'Avisos de los profesores y recursos nuevos (guías, archivos).'),
-        h('li', null, 'Fechas escritas dentro de los avisos: quedan en «Para revisar», porque leerlas del texto puede fallar.'))),
+        h('li', null, 'Fechas escritas dentro de los avisos: quedan en «Para revisar», porque leerlas del texto puede fallar.'),
+        h('li', null, 'Además, en «Crear clases con mi material» el script trae los archivos de tus cursos para armar clases.'))),
     h('p', {class:'tiny muted', style:'margin-top:10px'}, 'En el celular depende del navegador: Firefox para Android acepta Tampermonkey; en iPhone no puedo confirmar que funcione igual. Ahí sigue sirviendo el marcador «Enviar a Calculai» o «Pasar a otro dispositivo».'));
 }
 function outlookCard(){

@@ -628,3 +628,20 @@ button.res{text-align:left;cursor:pointer;width:100%}
 .pc-field .chk > span{min-width:0}
 .pc-field .viewsw{gap:4px}
 .pc-field .viewsw .seg{min-width:38px;padding-left:8px;padding-right:8px}
+
+/* Generador de clases */
+.gen-step{border:1px solid var(--line);border-radius:12px;padding:12px;margin:12px 0;background:var(--card)}
+.gen-step h4{margin:0 0 8px}
+.gen-step.done{border-color:var(--ok)}
+.gen-list{display:flex;flex-direction:column;gap:6px;max-height:260px;overflow:auto;padding:2px}
+.gen-list .chk{display:flex;gap:8px;align-items:flex-start;justify-content:space-between}
+.gen-list .chk > span{flex:1;min-width:0;overflow-wrap:anywhere}
+.gen-plan input[type=text]{width:100%;max-width:520px;border:1px solid var(--line);border-radius:8px;padding:4px 8px;background:var(--card-2,var(--card));color:inherit;font:inherit;font-weight:700}
+.gen-read{color:var(--ok);margin:8px 0 0;padding-left:18px}
+.gen-err{color:var(--bad);margin:8px 0 0;padding-left:18px}
+.gen-status{min-height:1.2em;font-weight:700;color:var(--accent)}
+.gen-ai{margin-top:12px}
+.gen-ai summary{cursor:pointer;font-weight:700;color:var(--ink-3)}
+.lc-toc{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 14px;padding:0 0 10px;border-bottom:1px dashed var(--line)}
+.lc-toc .chip{cursor:pointer;min-height:32px}
+.sec-title{flex-wrap:wrap}
