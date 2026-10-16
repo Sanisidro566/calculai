@@ -7,7 +7,7 @@
    DATOS ... Y PROGRESO .. D (datos) y P (progreso): blankData/blankProg, normData/normProg, save()
    MOTOR «¿QUÉ HAGO AHORA?» score(), ranked(), buildSession()
    NAVEGACIÓN ............ TABS, go(), render() y las vistas:
-                           vWelcome · vAhora · vMapa · vPractica · vErrores · vCal (vMonth, vAgenda) · vBiblio
+                           vWelcome · vAhora · vMapa · vPractica (con vErrores adentro) · vCal (vMonth, vAgenda, plan) · vBiblio
    CLASES ................ vClases, vLesson, visor de Drive/YouTube/PDF (embedUrl, viewer)
      · Clases guardadas .. paquete de clases en IndexedDB «calculai-clases» (ldbPut/ldbGet, savedFrame, importPack)
      · IA ................ AI_MODES, aiPrompt, callAI, openAIPanel
@@ -99,7 +99,7 @@ const W = Object.fromEntries(STATUSES.map(s => [s.k, s.w]));
 const SL = Object.fromEntries(STATUSES.map(s => [s.k, s.l]));
 const INTERVAL = {aprendiendo:1, practicado:3, repaso:1, dominado:7};
 const STORE = 'calculai:v1', OLD_STORE = 'cuaderno-web:v1';
-const blankData = () => ({v:1, owner:'', subjects:[], events:[], topics:[], items:[], resources:[], news:[], sync:{}});
+const blankData = () => ({v:1, owner:'', subjects:[], events:[], topics:[], items:[], resources:[], news:[], sync:{}, plan:{}});
 const blankProg = () => ({status:{}, attempts:[], errors:[], days:{}, sessions:[], dayLoad:{}, lastLesson:''});
 function normData(d){ const b = blankData(); if (!d || typeof d !== 'object') return b; for (const k of Object.keys(b)) if (d[k] != null && typeof d[k] === typeof b[k]) b[k] = d[k]; return b; }
 function normProg(p){ const b = blankProg(); if (!p || typeof p !== 'object') return b; for (const k of Object.keys(b)) if (p[k] != null && typeof p[k] === typeof b[k]) b[k] = p[k]; return b; }
@@ -182,10 +182,11 @@ function daySuggest(d){
 /* =========================================================
    NAVEGACIÓN
    ========================================================= */
-const TABS = [{k:'ahora', l:'Ahora', i:'◎'}, {k:'clases', l:'Clases', i:'▤'}, {k:'mapa', l:'Mapa', i:'◇'}, {k:'practica', l:'Práctica', i:'✎'}, {k:'errores', l:'Errores', i:'⚠'}, {k:'cal', l:'Calendario', s:'Agenda', i:'▦'}, {k:'biblio', l:'Biblioteca', s:'Biblio', i:'❏'}, {k:'editar', l:'Editar', i:'⚙'}];
-let tab = 'ahora', mapSubj = null, planPick = 0, pracFilter = 'todo', selDay = null;
+const TABS = [{k:'ahora', l:'Ahora', i:'◎'}, {k:'clases', l:'Clases', i:'▤'}, {k:'mapa', l:'Mapa', i:'◇'}, {k:'practica', l:'Práctica', i:'✎'}, {k:'cal', l:'Calendario', s:'Agenda', i:'▦'}, {k:'biblio', l:'Biblioteca', s:'Biblio', i:'❏'}, {k:'editar', l:'Editar', i:'⚙'}];
+let tab = 'ahora', mapSubj = null, planPick = 0, pracFilter = 'todo', selDay = null, pracSec = 'ejercicios';
 try { const t = sessionStorage.getItem('calculai-tab'); if (t && TABS.some(x => x.k === t)) tab = t; } catch {}
-function go(k){ tab = k; try { sessionStorage.setItem('calculai-tab', k); } catch {} closeSidebar(); render(); window.scrollTo({top:0}); }
+/* El banco de errores vive dentro de Práctica: go('errores') abre Práctica en esa sección. */
+function go(k){ if (k === 'errores'){ k = 'practica'; pracSec = 'errores'; } else if (k === 'practica' && tab !== 'practica') pracSec = 'ejercicios'; tab = k; try { sessionStorage.setItem('calculai-tab', k); } catch {} closeSidebar(); render(); window.scrollTo({top:0}); }
 function closeSidebar(){ const sb = $('#sidebar'); if (sb) sb.classList.remove('open'); const sc = $('#scrim'); if (sc) sc.classList.remove('on'); }
 function renderTabs(){
   const nav = $('#tabs'); nav.replaceChildren();
@@ -193,7 +194,7 @@ function renderTabs(){
   if (!D.subjects.length) return;
   const openErr = P.errors.filter(e => !e.resolved).length;
   TABS.forEach(t => {
-    const cnt = t.k === 'errores' && openErr ? openErr : 0;
+    const cnt = t.k === 'practica' && openErr ? openErr : 0;
     const onTab = () => { if (t.k === 'clases' && tab === 'clases') lessonOpen = null; go(t.k); };
     nav.append(h('button', {class:'tab', role:'tab', type:'button', 'aria-selected':String(tab === t.k), onclick:onTab},
       h('span', {class:'ti'}, t.i), t.l,
@@ -209,7 +210,7 @@ function render(){
   const v = $('#view'); v.replaceChildren();
   if (!D.subjects.length && tab !== 'webc'){ vWelcome(v); return; }
   if (tab === 'webc'){ vWebcReview(v); return; }
-  ({ahora:vAhora, clases:vClases, mapa:vMapa, practica:vPractica, errores:vErrores, cal:vCal, biblio:vBiblio, editar:vEditar})[tab](v);
+  ({ahora:vAhora, clases:vClases, mapa:vMapa, practica:vPractica, cal:vCal, biblio:vBiblio, editar:vEditar})[tab](v);
 }
 const subjChip = s => h('span', {class:'chip subj-chip', style:scs(s)}, h('span', {class:'dot', style:'background:var(--sc)'}), S(s).short);
 const scopeTag = sc => sc ? h('span', {class:`scope ${sc}`}, SCOPE_LBL[sc]) : null;
@@ -256,6 +257,7 @@ function vAhora(v){
 
   const nv = novedadesCard(); if (nv) v.append(nv);
   const ib = inboxCard(); if (ib) v.append(ib);
+  const tp = todayPlanCard(); if (tp) v.append(tp);
   const lastL = P.lastLesson && topic(P.lastLesson);
   if (lastL) v.append(h('button', {class:'card cl-cont cl-strip', type:'button', style:scs(lastL.subj), onclick:() => openLesson(lastL.id)}, h('small', {class:'kicker'}, '▤ Continuar tu clase'), h('b', null, lastL.title), h('span', {class:'tiny muted'}, S(lastL.subj).name + ' · ' + (hasLesson(lastL) ? readMin(lastL) + ' min de lectura' : 'material del curso'))));
   if (upcoming.length){
@@ -275,6 +277,8 @@ function vAhora(v){
 
   const grid = h('div', {class:'grid2'});
   const list = ranked();
+  const todays = planOn(iso(TODAY)).filter(x => !x.rev && !x.done).map(x => x.t.id);
+  if (todays.length && planPick === 0){ const i = list.findIndex(x => x.t.id === todays[0]); if (i > 0) list.unshift(list.splice(i, 1)[0]); }
   if (list.length){
     const pick = list[planPick % list.length], t = pick.t, steps = buildSession(t);
     const total = steps.reduce((a, s) => a + s.min, 0);
@@ -462,8 +466,16 @@ function lstateSet(key, state){ const all = lstateAll(); all[key] = state; try {
 /* Script que se antepone a la clase: reemplaza localStorage por una copia que avisa a Calculai cada cambio. */
 function lessonShim(key){
   const j = v => JSON.stringify(v).replace(/</g, '\\u003c');
-  return `<script>(function(){var K=${j(key)},S=${j(lstateAll()[key] || {})};function send(){try{parent.postMessage({type:'calculai-lstate',key:K,state:S},'*')}catch(e){}}var st={getItem:function(k){k=String(k);return Object.prototype.hasOwnProperty.call(S,k)?S[k]:null},setItem:function(k,v){S[String(k)]=String(v);send()},removeItem:function(k){delete S[String(k)];send()},clear:function(){S={};send()},key:function(i){return Object.keys(S)[i]||null},get length(){return Object.keys(S).length}};try{Object.defineProperty(window,'localStorage',{value:st,configurable:true})}catch(e){}})();<\/script>`;
+  return `<script>(function(){var K=${j(key)},S=${j(lstateAll()[key] || {})};function send(){try{parent.postMessage({type:'calculai-lstate',key:K,state:S},'*')}catch(e){}}var st={getItem:function(k){k=String(k);return Object.prototype.hasOwnProperty.call(S,k)?S[k]:null},setItem:function(k,v){S[String(k)]=String(v);send()},removeItem:function(k){delete S[String(k)];send()},clear:function(){S={};send()},key:function(i){return Object.keys(S)[i]||null},get length(){return Object.keys(S).length}};try{Object.defineProperty(window,'localStorage',{value:st,configurable:true})}catch(e){}${lessonNavFix}})();<\/script>`;
 }
+/* Dentro de la clase (srcdoc), un enlace «#teoria» se resolvía contra la dirección de Calculai y cargaba la app
+   dentro del recuadro. Aquí: los «#…» desplazan a esa parte, los enlaces web abren en otra pestaña y nada más
+   puede sacar a la clase de su recuadro (tampoco un formulario sin destino). */
+const lessonNavFix = "function sc(id){var el=id?(document.getElementById(id)||document.getElementsByName(id)[0]):null;if(el)el.scrollIntoView({behavior:'smooth',block:'start'});else if(!id)window.scrollTo({top:0,behavior:'smooth'})}"
+  + "document.addEventListener('click',function(e){var a=e.target&&e.target.closest?e.target.closest('a[href]'):null;if(!a)return;var h=a.getAttribute('href')||'';"
+  + "if(h.charAt(0)==='#'){e.preventDefault();var id=h.slice(1);try{id=decodeURIComponent(id)}catch(x){}sc(id);return}"
+  + "if(/^(javascript:|mailto:|tel:|blob:|data:)/i.test(h))return;if(/^https?:/i.test(h)){a.setAttribute('target','_blank');a.setAttribute('rel','noopener');return}e.preventDefault()},true);"
+  + "document.addEventListener('submit',function(e){var f=e.target,act=f&&f.getAttribute&&f.getAttribute('action');if(!act||!/^https?:/i.test(act))e.preventDefault()},true);";
 function withShim(html, key){ const m = html.match(/<head[^>]*>/i); return m ? html.replace(m[0], m[0] + lessonShim(key)) : lessonShim(key) + html; }
 window.addEventListener('message', ev => {
   const d = ev.data; if (!d || d.type !== 'calculai-lstate' || typeof d.key !== 'string' || !d.state || typeof d.state !== 'object') return;
@@ -779,6 +791,11 @@ function parseNum(s){ s = String(s).trim().replace(/\s/g, '').replace(',', '.');
 const fmtNum = n => String(Math.round(n * 1e6) / 1e6).replace('.', ',');
 /* ---------- Vista: Práctica ---------- */
 function vPractica(v){
+  const openErr = P.errors.filter(e => !e.resolved && D.items.some(i => i.id === e.item)).length;
+  v.append(h('div', {class:'viewsw prac-sec', role:'tablist', 'aria-label':'Sección de práctica'},
+    h('button', {class:'seg', type:'button', role:'tab', 'aria-selected':String(pracSec !== 'errores'), 'aria-pressed':String(pracSec !== 'errores'), onclick:() => { pracSec = 'ejercicios'; render(); }}, '✎ Ejercicios'),
+    h('button', {class:'seg', type:'button', role:'tab', 'aria-selected':String(pracSec === 'errores'), 'aria-pressed':String(pracSec === 'errores'), onclick:() => { pracSec = 'errores'; render(); }}, '⚠ Banco de errores', openErr ? h('span', {class:'count'}, openErr) : null)));
+  if (pracSec === 'errores'){ vErrores(v); return; }
   const isTopic = pracFilter !== 'todo' && !D.subjects.some(s => s.id === pracFilter);
   if (isTopic && !topic(pracFilter)) pracFilter = 'todo';
   v.append(h('div', {class:'filterrow'},
@@ -868,7 +885,7 @@ function calibMsg(A){
 /* ---------------- ERRORES ---------------- */
 const CAUSES = [['','¿Por qué fallé?'],['concepto','No entendía el concepto'],['procedimiento','Elegí mal el procedimiento'],['algebra','Error de álgebra o aritmética'],['lectura','Leí mal el enunciado'],['descuido','Descuido (signo, unidad)']];
 let errFilter = 'abiertos';
-/* ---------- Vista: Errores ---------- */
+/* ---------- Vista: Errores (sección dentro de Práctica) ---------- */
 function vErrores(v){
   v.append(h('div', {class:'sec-title'}, h('h2', null, 'Banco de errores'), h('span', {class:'hand'}, 'cada error es un ejercicio gratis')));
   v.append(h('div', {class:'filterrow', style:'margin-top:0'}, [['abiertos','Por resolver'],['peligrosos','Peligrosos'],['resueltos','Resueltos']].map(([k, l]) => h('button', {class:'seg', type:'button', 'aria-pressed':String(errFilter === k), onclick:() => { errFilter = k; render(); }}, l))));
@@ -890,7 +907,7 @@ function vErrores(v){
       h('div', {class:'err-tools'},
         h('select', {'aria-label':'Causa del error', onchange:ev => { e.cause = ev.target.value; save(); }}, CAUSES.map(([k, l]) => { const o = h('option', {value:k}, l); if (e.cause === k) o.selected = true; return o; })),
         h('input', {placeholder:'Qué haré distinto la próxima vez', value:e.note || '', 'aria-label':'Nota', onchange:ev => { e.note = ev.target.value; save(); }}),
-        h('button', {class:'btn small', type:'button', onclick:() => { pracFilter = it.topic; newQ(it); go('practica'); }}, 'Reintentar'))));
+        h('button', {class:'btn small', type:'button', onclick:() => { pracFilter = it.topic; newQ(it); pracSec = 'ejercicios'; render(); window.scrollTo({top:0}); }}, 'Reintentar'))));
   });
   v.append(wrap);
 }
@@ -914,20 +931,22 @@ function eventRow(e, compact){
 }
 /* ---------- Vista: Calendario ---------- */
 function vCal(v){
-  v.append(h('div', {class:'sec-title'}, h('h2', null, 'Calendario'), h('span', {class:'hand'}, '✓ = fecha confirmada en una fuente oficial')));
+  v.append(h('div', {class:'sec-title'}, h('h2', null, 'Calendario'), h('span', {class:'hand'}, 'evaluaciones y qué estudiar cada día')));
+  v.append(planCard());
   v.append(h('div', {class:'calbar-top'},
     h('div', {class:'viewsw', role:'group', 'aria-label':'Vista'}, [['mes','Mes'],['agenda','Agenda']].map(([k, l]) => h('button', {class:'seg', type:'button', 'aria-pressed':String(calView === k), onclick:() => { calView = k; render(); }}, l))),
     h('div', {class:'filters', role:'group', 'aria-label':'Materias'}, D.subjects.map(s => h('button', {class:'seg', type:'button', style:scs(s.id), 'aria-pressed':String(!calOff[s.id]), onclick:() => { calOff[s.id] = !calOff[s.id]; render(); }}, h('span', {class:'dot', style:'background:var(--sc)'}), s.short))),
     h('div', {style:'display:flex;gap:6px;flex-wrap:wrap'},
       h('button', {class:'btn ghost small', type:'button', onclick:() => openEventForm(null)}, '+ Evento'),
-      h('button', {class:'btn small', type:'button', onclick:exportICS}, '⇩ Calendario (.ics)'),
+      h('button', {class:'btn small', type:'button', onclick:exportICS}, '⇩ Evaluaciones (.ics)'),
       h('button', {class:'btn ghost small', type:'button', onclick:exportCSV, title:'Formato CSV de Google Calendar'}, 'CSV'))));
-  v.append(h('div', {class:'legend', style:'margin:8px 0 0'}, Object.entries(KIND).filter(([k]) => k !== 'otro').map(([k, o]) => h('span', null, h('span', {class:`kchip k-${k}`}, o.i + ' ' + o.l))),
-    h('span', null, h('span', {class:'ver ok'}, '✓'), ' confirmada'), h('span', null, h('span', {class:'ver no'}, '⚠'), ' sin confirmar')));
   if (calView === 'mes') vMonth(v); else vAgenda(v);
+  v.append(h('div', {class:'legend', style:'margin:12px 0 0'}, Object.entries(KIND).filter(([k]) => k !== 'otro').map(([k, o]) => h('span', null, h('span', {class:`kchip k-${k}`}, o.i + ' ' + o.l))),
+    planCfg().on ? h('span', null, h('span', {class:'mp', style:'--sc:var(--ink-3)'}, '▤ C01'), ' clase del plan') : null,
+    h('span', null, h('span', {class:'ver ok'}, '✓'), ' confirmada'), h('span', null, h('span', {class:'ver no'}, '⚠'), ' sin confirmar')));
   const und = D.events.filter(e => !e.date && evOn(e));
   if (und.length) v.append(h('div', {class:'card', style:'margin-top:14px'}, h('b', null, 'Sin fecha todavía'), und.map(e => h('div', {class:'tiny', style:'margin-top:6px'}, kindChip(e), ' ', `${S(e.subj).short} · ${e.name}${e.note ? ' — ' + e.note : ''}`))));
-  v.append(h('p', {class:'note'}, 'El archivo .ics se importa en Google Calendar, Apple Calendar u Outlook. Las barras de color de cada día sugieren en qué materia enfocarte.'));
+  v.append(h('p', {class:'note'}, planCfg().on ? 'Los archivos .ics se importan en Google Calendar, Apple Calendar u Outlook.' : 'Los archivos .ics se importan en Google Calendar, Apple Calendar u Outlook. Las barras de color de cada día sugieren en qué materia enfocarte; arma tu plan arriba para ver las clases de cada día.'));
 }
 function vMonth(v){
   if (!calMonth) calMonth = new Date(TODAY.getFullYear(), TODAY.getMonth(), 1);
@@ -944,7 +963,8 @@ function vMonth(v){
   if (!selDay) selDay = iso(TODAY);
   for (let d = new Date(start); d <= end; d = addDays(d, 1)){
     const k = iso(d), out = d.getMonth() !== m, past = d < TODAY, evs = eventsOn(k), sug = daySuggest(d);
-    const bar = (!past && d <= lastEval) ? sug.next.filter(b => !calOff[b.s]).slice(0, 2) : [];
+    const pl = past ? [] : planOn(k).filter(x => !calOff[x.rev ? x.subj : x.t.subj]);
+    const bar = (!past && d <= lastEval && !planCfg().on) ? sug.next.filter(b => !calOff[b.s]).slice(0, 2) : [];
     g.append(h('button', {class:`mday ${out ? 'out' : ''} ${past ? 'past' : ''} ${k === iso(TODAY) ? 'today' : ''} ${selDay === k ? 'sel' : ''}`, type:'button',
         'aria-label':`${fmtD(d)}${evs.length ? ', ' + evs.length + ' evento(s)' : ''}`, onclick:() => { selDay = k; render(); }},
       h('span', {class:'mnum'}, d.getDate()),
@@ -952,6 +972,7 @@ function vMonth(v){
       P.days[k] ? h('span', {class:'tick', 'aria-label':'hecho'}, '✓') : null,
       h('span', {class:'mevs'}, evs.map(e => h('span', {class:`mev k-${e.kind} ${e.ver ? '' : 'unver'}`, style:scs(e.subj), title:`${S(e.subj).short} · ${e.name} · ${evWhen(e)}`},
         h('span', {class:'mev-t'}, `${(KIND[e.kind] || KIND.otro).i} ${e.time ? e.time.slice(0, 5) + ' ' : ''}${S(e.subj).short} ${e.name}`)))),
+      pl.length ? h('span', {class:'mplan'}, pl.slice(0, 3).map(x => h('span', {class:'mp' + (x.done ? ' done' : '') + (x.rev ? ' rev' : ''), style:scs(x.rev ? x.subj : x.t.subj), title:planLbl(x)}, x.rev ? '↻ repaso' : `${x.done ? '✓' : '▤'} ${x.t.code || x.t.title}`)), pl.length > 3 ? h('span', {class:'mp more'}, `+${pl.length - 3}`) : null) : null,
       bar.length ? h('span', {class:'focusbar', title:'Foco sugerido'}, bar.map((b, i) => h('span', {style:`width:${i ? 35 : 65}%;background:var(--c-${S(b.s).color})`}))) : null));
   }
   v.append(h('div', {class:'card', style:'padding:10px;margin-top:10px'}, g));
@@ -1005,9 +1026,11 @@ function dayDetail(v){
   v.append(h('section', {class:'card daydetail'},
     h('h3', {class:'display', style:'margin:0 0 8px;font-size:1.2rem'}, cap(fmtD(sd))),
     evs.length ? h('div', {class:'evlist'}, evs.map(e => eventRow(e))) : h('p', {class:'muted tiny', style:'margin:0 0 8px'}, 'Sin evaluaciones ni entregas este día.'),
-    sd >= TODAY && sd <= lastEval && sug.tips.length ? h('div', null, h('b', {class:'tiny', style:'text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3)'}, 'Foco de estudio sugerido'),
+    sd >= TODAY && planOn(selDay).length ? h('div', {class:'dd-plan'}, h('b', {class:'tiny', style:'text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3)'}, 'Tu plan para este día'), h('div', {class:'plist'}, planOn(selDay).map(planRow))) : null,
+    sd >= TODAY && planCfg().on && !planOn(selDay).length ? h('p', {class:'tiny muted'}, 'Sin clases del plan este día.') : null,
+    sd >= TODAY && sd <= lastEval && sug.tips.length && !planCfg().on ? h('div', null, h('b', {class:'tiny', style:'text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3)'}, 'Foco de estudio sugerido'),
       h('ul', {style:'margin:4px 0 12px;padding-left:18px'}, sug.tips.map(x => h('li', null, x)))) : null,
-    sd >= TODAY ? dayLoadEditor(selDay) : null,
+    sd >= TODAY ? h('details', {class:'dl-wrap', open:(P.dayLoad[selDay] && P.dayLoad[selDay].hours) || null}, h('summary', {class:'tiny'}, planCfg().on ? 'Cambiar las horas de este día' : 'Horas disponibles este día'), dayLoadEditor(selDay)) : null,
     h('div', {style:'display:flex;gap:12px;flex-wrap:wrap;align-items:center'},
       sd >= TODAY ? h('label', {class:'chk'}, h('input', {type:'checkbox', checked:P.days[selDay] || null, onchange:e => { if (e.target.checked) P.days[selDay] = true; else delete P.days[selDay]; save(); render(); }}), 'Cumplí el plan de este día') : null,
       h('button', {class:'btn ghost small', type:'button', onclick:() => openEventForm(null, selDay)}, '+ Evento este día'))));
@@ -1015,15 +1038,161 @@ function dayDetail(v){
 function vAgenda(v){
   const from = addDays(TODAY, -((TODAY.getDay() + 6) % 7));
   const evs = D.events.filter(e => e.date && evOn(e) && parse(e.date) >= from).sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || '')));
-  if (!evs.length){ v.append(h('div', {class:'card empty empty-cta', style:'margin-top:14px'}, 'No hay eventos próximos.', h('button', {class:'btn small', type:'button', onclick:() => openEventForm(null)}, '+ Agregar evento'))); return; }
+  /* Cada día: primero sus evaluaciones y entregas, después las clases del plan (si hay plan). */
+  const p = buildPlan(), keys = new Set(evs.map(e => e.date));
+  if (p) Object.keys(p.days).forEach(k => keys.add(k));
+  if (!keys.size){ v.append(h('div', {class:'card empty empty-cta', style:'margin-top:14px'}, 'No hay eventos próximos.', h('button', {class:'btn small', type:'button', onclick:() => openEventForm(null)}, '+ Agregar evento'))); return; }
   let wk = null, box = null; const wrap = h('div', {class:'agenda'});
-  evs.forEach(e => {
-    const d = parse(e.date), ws = iso(addDays(d, -((d.getDay() + 6) % 7)));
+  [...keys].sort().forEach(k => {
+    const d = parse(k), ws = iso(addDays(d, -((d.getDay() + 6) % 7)));
     if (ws !== wk){ wk = ws; const wd = parse(ws), rel = diffDays(from, wd) / 7;
       box = h('div', {class:'agweek'}, h('div', {class:'agwh'}, rel === 0 ? 'Esta semana' : rel === 1 ? 'Próxima semana' : `Semana del ${wd.getDate()} de ${MES_L[wd.getMonth()]}`)); wrap.append(box); }
-    box.append(eventRow(e));
+    evs.filter(e => e.date === k).forEach(e => box.append(eventRow(e)));
+    const pl = (p && p.days[k] || []).filter(x => !calOff[x.rev ? x.subj : x.t.subj]);
+    if (pl.length) box.append(h('div', {class:'agplan'}, h('div', {class:'tiny agp-d'}, `${k === iso(TODAY) ? 'Hoy' : cap(fmtD(d))} · plan`), h('div', {class:'plist'}, pl.map(planRow))));
   });
   v.append(wrap);
+}
+/* ---------- Plan de estudio automático (Calendario) ----------
+   Reparte las clases pendientes de cada materia en los días que quedan hasta cada evaluación, en el orden del
+   curso (desde la primera clase). Se recalcula desde hoy con tu estado actual: lo que marcas Practicado o
+   Dominado sale del plan (si lo marcaste hoy, se muestra hecho) y lo demás se reacomoda. Ajustes en D.plan.
+   Las horas de un día editadas en «Horas disponibles» (P.dayLoad) mandan sobre las horas por día del plan. */
+const PLAN_DEF = {on:false, start:'hoy', before:7, hours:2, minPer:60, days:[1, 2, 3, 4, 5, 6, 0]};
+const planCfg = () => ({...PLAN_DEF, ...(D.plan || {})});
+const doneOn = t => ['practicado', 'dominado'].includes(st(t.id)) ? (P.status[t.id] && P.status[t.id].at) || '' : null;
+let planCache = null;
+function buildPlan(){
+  const c = planCfg(); if (!c.on) return null;
+  const key = JSON.stringify([c, iso(TODAY), D.topics.map(t => [t.id, t.subj, t.exam || '', doneOn(t)]), D.events.map(e => [e.id, e.date, e.kind, e.subj, e.topics || []]), P.dayLoad]);
+  if (planCache && planCache.key === key) return planCache.plan;
+  const evAll = exams().filter(e => parse(e.date) >= TODAY), bySubj = {}, queues = {};
+  D.subjects.forEach(sb => { bySubj[sb.id] = evAll.filter(e => e.subj === sb.id); });
+  const general = (sid, after) => bySubj[sid].find(x => parse(x.date) > after && !(x.topics && x.topics.length));
+  const target = (t, list) => (t.exam && list.find(x => x.id === t.exam)) || list.find(x => (x.topics || []).includes(t.id)) || list.find(x => !(x.topics && x.topics.length));
+  D.subjects.forEach(sb => {
+    const list = bySubj[sb.id]; if (!list.length) return;
+    const q = topicsOf(sb.id).map((t, i) => ({t, i, e:target(t, list), done:doneOn(t)}))
+      .filter(x => x.e && (x.done == null || x.done === iso(TODAY)));
+    q.sort((a, b) => a.e.date.localeCompare(b.e.date) || a.i - b.i);
+    if (q.length) queues[sb.id] = q;
+  });
+  const plan = {cfg:c, days:{}, late:[], left:[], total:0};
+  const last = evAll.length ? parse(evAll.at(-1).date) : null;
+  if (last){
+    const minutes = d => { const dl = P.dayLoad[iso(d)]; if (dl && dl.hours) return dl.hours * 60; return c.days.includes(d.getDay()) ? c.hours * 60 : 0; };
+    for (let d = new Date(TODAY); d < last; d = addDays(d, 1)){
+      const k = iso(d), m = minutes(d); let slots = m > 0 ? Math.max(1, Math.round(m / c.minPer)) : 0;
+      const out = [];
+      /* La víspera de cada evaluación: repaso y ensayo, no materia nueva de esa asignatura. */
+      evAll.filter(e => diffDays(d, parse(e.date)) === 1).forEach(e => { if (slots > 0){ out.push({rev:true, subj:e.subj, e}); slots--; } });
+      for (const sid in queues){
+        const q = queues[sid]; let moved = false;
+        for (const it of q) if (parse(it.e.date) <= d){
+          const nx = general(sid, d);
+          if (d > TODAY) plan.late.push({t:it.t, e:it.e, to:nx || null}); // si la evaluación es hoy no hubo días para planificar
+          if (nx) it.e = nx; else it.drop = true; moved = true;
+        }
+        if (moved){ queues[sid] = q.filter(x => !x.drop).sort((a, b) => a.e.date.localeCompare(b.e.date) || a.i - b.i); }
+      }
+      /* Cada cupo va a la materia más apurada: clases que le faltan para su evaluación ÷ días que quedan
+         (sin contar la víspera). Si ya tiene una clase ese día, pesa la mitad: así las materias se alternan. */
+      while (slots > 0){
+        let best = null, bestScore = -1;
+        for (const sid in queues){
+          const q = queues[sid], it = q[0]; if (!it) continue;
+          const left = diffDays(d, parse(it.e.date));
+          if (left <= 1 && out.some(x => x.rev && x.subj === sid)) continue;
+          if (c.start === 'antes' && left > c.before) continue;
+          let score = q.filter(x => x.e.date === it.e.date).length / Math.max(1, left - 1);
+          if (out.some(x => !x.rev && x.t.subj === sid)) score *= .5;
+          if (score > bestScore){ best = it; bestScore = score; }
+        }
+        if (!best) break;
+        queues[best.t.subj].shift(); out.push({t:best.t, e:best.e, done:best.done === iso(TODAY)}); slots--; plan.total++;
+      }
+      if (out.length) plan.days[k] = out;
+    }
+  }
+  for (const sid in queues) queues[sid].forEach(it => plan.left.push({t:it.t, e:it.e}));
+  planCache = {key, plan};
+  return plan;
+}
+const planOn = k => { const p = buildPlan(); return p ? p.days[k] || [] : []; };
+const planLbl = x => x.rev ? `Repaso · ${S(x.subj).short} ${x.e.name}` : (x.t.code ? x.t.code + ' · ' : '') + x.t.title;
+function planRow(x){
+  if (x.rev) return h('div', {class:'prow rev', style:scs(x.subj)},
+    h('span', {class:'pdot'}), h('div', {style:'min-width:0;flex:1'}, h('b', null, `Repaso y ensayo · ${S(x.subj).short}`), h('div', {class:'tiny muted'}, `Mañana es ${x.e.name}: fórmulas, errores y ejercicios mixtos. Nada nuevo.`)),
+    h('button', {class:'btn ghost small', type:'button', onclick:() => { pracFilter = x.subj; Q = null; go('practica'); }}, 'Practicar'));
+  const t = x.t, s = st(t.id);
+  return h('div', {class:'prow' + (x.done ? ' done' : ''), style:scs(t.subj)},
+    h('span', {class:'pdot'}),
+    h('div', {style:'min-width:0;flex:1'}, h('b', null, (x.done ? '✓ ' : '') + planLbl(x)),
+      h('div', {class:'tiny muted'}, `${S(t.subj).short} · para ${x.e.name} (${fmtD(parse(x.e.date))}) · ${SL[s]}`)),
+    h('button', {class:'btn ghost small', type:'button', onclick:() => openLesson(t.id)}, 'Abrir clase'));
+}
+/* Tarjeta del Calendario: pregunta cuánto quieres estudiar y arma el plan. */
+let planEdit = false;
+function planCard(){
+  const c = planCfg(), p = buildPlan();
+  if (c.on && !planEdit){
+    const nDays = Object.keys(p.days).length, lateNow = p.late.filter((x, i, a) => a.findIndex(y => y.t.id === x.t.id) === i);
+    return h('section', {class:'card plancard on'},
+      h('div', {class:'pc-head'},
+        h('div', null, h('h3', null, 'Tu plan de estudio'),
+          h('p', {class:'tiny muted', style:'margin:2px 0 0'}, `${c.start === 'hoy' ? 'Desde hoy' : `Desde ${plural(c.before, 'día', 'días')} antes de cada evaluación`} · ${String(c.hours).replace('.', ',')} h por día · ${c.minPer} min por clase · ${plural(p.total, 'clase agendada', 'clases agendadas')} en ${plural(nDays, 'día', 'días')}.`)),
+        h('div', {style:'display:flex;gap:6px;flex-wrap:wrap'},
+          h('button', {class:'btn ghost small', type:'button', onclick:() => { planEdit = true; render(); }}, 'Ajustar'),
+          h('button', {class:'btn ghost small', type:'button', onclick:exportPlanICS}, '⇩ Plan (.ics)'))),
+      lateNow.length ? h('div', {class:'pc-warn'}, h('b', null, `No alcanza el tiempo para ${plural(lateNow.length, 'clase', 'clases')} antes de su evaluación.`),
+        lateNow.some(x => x.to) ? h('div', null, 'Pasan a la evaluación siguiente: ', lateNow.filter(x => x.to).map(x => `${S(x.t.subj).short} ${x.t.code || x.t.title} (${x.to.name})`).join(', '), '.') : null,
+        lateNow.some(x => !x.to) ? h('div', null, 'Quedan fuera del plan: ', lateNow.filter(x => !x.to).map(x => `${S(x.t.subj).short} ${x.t.code || x.t.title}`).join(', '), '.') : null,
+        h('div', null, 'Sube las horas por día, agrega días o empieza antes.')) : null,
+      p.left.length ? h('div', {class:'pc-warn'}, `${plural(p.left.length, 'clase quedó', 'clases quedaron')} sin día: `, p.left.slice(0, 4).map(x => x.t.code || x.t.title).join(', '), p.left.length > 4 ? '…' : '', '. Sube las horas o agrega días de estudio.') : null,
+      h('p', {class:'tiny muted', style:'margin:10px 0 0'}, 'Se reacomoda solo: cuando marcas una clase como Practicado o Dominado, sale del plan y lo demás avanza. La víspera de cada evaluación queda para repaso.'));
+  }
+  const f = {...c};
+  const num = (k, min, max, step, w) => h('input', {type:'number', min, max, step, value:f[k], style:`width:${w || 76}px`, 'aria-label':k, onchange:e => { const v = parseFloat(String(e.target.value).replace(',', '.')); if (Number.isFinite(v)) f[k] = Math.max(min, Math.min(max, v)); }});
+  const DL = [[1, 'L'], [2, 'M'], [3, 'M'], [4, 'J'], [5, 'V'], [6, 'S'], [0, 'D']];
+  const daysRow = h('div', {class:'viewsw', role:'group', 'aria-label':'Días de estudio'}, DL.map(([d, l]) => {
+    const b = h('button', {class:'seg', type:'button', 'aria-pressed':String(f.days.includes(d)), 'aria-label':DIAS[d]}, l);
+    b.onclick = () => { f.days = f.days.includes(d) ? f.days.filter(x => x !== d) : f.days.concat(d); b.setAttribute('aria-pressed', String(f.days.includes(d))); };
+    return b;
+  }));
+  const radio = (val, ...label) => h('label', {class:'chk'}, h('input', {type:'radio', name:'plan-start', checked:f.start === val || null, onchange:() => { f.start = val; }}), ...label);
+  return h('section', {class:'card plancard'},
+    h('h3', null, '¿Cuánto quieres estudiar?'),
+    h('p', {class:'tiny muted', style:'margin:2px 0 12px'}, 'Dime cuándo empezar y cuántas horas al día. Pongo en el calendario las clases de cada día, en orden desde el inicio de cada materia, hasta cada evaluación.'),
+    h('div', {class:'pc-form'},
+      h('div', {class:'pc-field'}, h('b', {class:'tiny'}, 'Empezar'), radio('hoy', 'Desde hoy'), radio('antes', num('before', 1, 60, 1, 64), h('span', null, 'días antes de cada evaluación'))),
+      h('div', {class:'pc-field'}, h('b', {class:'tiny'}, 'Horas por día'), h('label', {class:'chk'}, num('hours', 0.5, 12, 0.5), ' h')),
+      h('div', {class:'pc-field'}, h('b', {class:'tiny'}, 'Minutos por clase'), h('label', {class:'chk'}, num('minPer', 20, 240, 5), ' min'), h('span', {class:'tiny muted'}, 'Incluye leer, ejercicios y errores.')),
+      h('div', {class:'pc-field'}, h('b', {class:'tiny'}, 'Días que estudias'), daysRow)),
+    h('div', {style:'display:flex;gap:8px;flex-wrap:wrap;margin-top:12px'},
+      h('button', {class:'btn', type:'button', onclick:() => { if (!f.days.length){ toast('Elige al menos un día'); return; } D.plan = {...f, on:true}; planEdit = false; save(); render(); const pp = buildPlan(); toast(pp.total ? `Plan listo: ${plural(pp.total, 'clase', 'clases')} en el calendario` : 'Plan guardado. No hay clases pendientes con evaluación por delante.', 4000); }}, c.on ? 'Guardar cambios' : 'Armar mi plan'),
+      c.on ? h('button', {class:'btn ghost', type:'button', onclick:() => { planEdit = false; render(); }}, 'Cancelar') : null,
+      c.on ? h('button', {class:'btn ghost', type:'button', onclick:() => { D.plan = {...c, on:false}; planEdit = false; save(); render(); toast('Plan quitado del calendario'); }}, 'Quitar plan') : null));
+}
+/* «Ahora»: lo que el plan dice para hoy. */
+function todayPlanCard(){
+  const items = planOn(iso(TODAY)); if (!planCfg().on || !items.length) return null;
+  const done = items.filter(x => x.done).length;
+  return h('section', {class:'card plancard today'},
+    h('div', {class:'pc-head'}, h('h3', null, `Hoy en tu plan · ${done}/${items.length}`), h('button', {class:'btn ghost small', type:'button', onclick:() => { calView = 'mes'; selDay = iso(TODAY); go('cal'); }}, 'Ver calendario')),
+    h('div', {class:'plist'}, items.map(planRow)));
+}
+function exportPlanICS(){
+  const p = buildPlan(); if (!p || !p.total){ toast('No hay clases en el plan'); return; }
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, ''), ymd = s => s.replace(/-/g, '');
+  const L = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Calculai//Plan//ES', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', 'X-WR-CALNAME:Calculai — plan de estudio'];
+  Object.entries(p.days).forEach(([k, xs]) => {
+    L.push('BEGIN:VEVENT', `UID:plan-${k}@calculai`, `DTSTAMP:${stamp}`, `DTSTART;VALUE=DATE:${ymd(k)}`, `DTEND;VALUE=DATE:${ymd(iso(addDays(parse(k), 1)))}`,
+      icsFold(`SUMMARY:${icsEsc('Estudiar: ' + xs.map(x => x.rev ? 'repaso ' + S(x.subj).short : (x.t.code || x.t.title)).join(', '))}`),
+      icsFold(`DESCRIPTION:${icsEsc(xs.map(x => '• ' + (x.rev ? `Repaso y ensayo ${S(x.subj).short} (mañana ${x.e.name})` : `${S(x.t.subj).short} · ${planLbl(x)} — para ${x.e.name}`)).join('\n'))}`), 'END:VEVENT');
+  });
+  L.push('END:VCALENDAR');
+  download('calculai-plan.ics', L.join('\r\n') + '\r\n', 'text/calendar');
+  toast('Plan descargado. En Google Calendar: Configuración → Importar');
 }
 /* Exportación */
 function download(filename, text, type){

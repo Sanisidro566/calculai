@@ -589,3 +589,42 @@ button.res{text-align:left;cursor:pointer;width:100%}
 
 /* «Para revisar»: posible cambio de fecha de una evaluación que ya está en el calendario */
 .ib-change{font-weight:700;color:var(--bad);margin:0 0 6px;font-size:.92rem;overflow-wrap:anywhere}
+
+/* Práctica: pestañas internas «Ejercicios» y «Banco de errores» */
+.prac-sec{margin:4px 0 12px}
+.prac-sec .seg{display:inline-flex;align-items:center;gap:6px}
+.prac-sec .count{font-size:.7rem;background:var(--margin);color:#fff;border-radius:99px;padding:0 6px;font-weight:700}
+
+/* Plan de estudio automático */
+.plancard{margin:0 0 14px}
+.plancard h3{margin:0;font-size:1.1rem}
+.plancard.on{border-left:4px solid var(--accent)}
+.plancard.today{border-left:4px solid var(--accent)}
+.pc-head{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap}
+.pc-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.pc-field{display:flex;flex-direction:column;gap:6px;min-width:0}
+.pc-field .chk{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.pc-field input[type=number]{min-height:36px;border:1px solid var(--line);border-radius:8px;background:var(--card-2,var(--card));color:inherit;padding:4px 8px;font:inherit}
+.note.warn{border-color:var(--bad);color:var(--ink)}
+.plist{display:flex;flex-direction:column;gap:6px;margin-top:6px}
+.prow{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--line);border-left:4px solid var(--sc);border-radius:10px;background:var(--card);min-width:0}
+.prow b{display:block;overflow-wrap:anywhere}
+.prow .pdot{width:8px;height:8px;border-radius:50%;background:var(--sc);flex:none}
+.prow.done{opacity:.6}
+.prow.rev{border-style:dashed;border-left-style:solid}
+.dd-plan{margin:4px 0 12px}
+.dl-wrap{margin:6px 0 10px}
+.dl-wrap summary{cursor:pointer;color:var(--ink-3);font-weight:700}
+.mplan{display:flex;flex-direction:column;gap:2px;min-width:0;margin-top:auto}
+.mp{display:block;font-size:.64rem;font-weight:700;line-height:1.25;border-radius:5px;padding:1px 5px;color:var(--sc);border:1px dashed var(--sc);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.mp.done{opacity:.55;text-decoration:line-through}
+.mp.rev{border-style:dotted}
+.mp.more{border:0;color:var(--ink-3)}
+.agplan{margin:4px 0 10px;padding-left:4px}
+.agp-d{font-weight:800;color:var(--ink-3);text-transform:uppercase;letter-spacing:.05em}
+@media (max-width:640px){.mp{font-size:0;height:5px;padding:0;border-width:2px 0 0}.mp.more{display:none}.prow{flex-wrap:wrap}.prow .btn{margin-left:18px}}
+.pc-warn{margin:10px 0 0;padding:10px 12px;border:1px solid var(--bad);border-radius:10px;background:color-mix(in srgb,var(--bad) 8%,var(--card));font-size:.88rem;display:flex;flex-direction:column;gap:3px}
+.pc-field .chk{flex-wrap:nowrap}
+.pc-field .chk > span{min-width:0}
+.pc-field .viewsw{gap:4px}
+.pc-field .viewsw .seg{min-width:38px;padding-left:8px;padding-right:8px}

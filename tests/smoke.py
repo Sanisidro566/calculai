@@ -36,7 +36,7 @@ SEED = r'''() => {
     resources:[], news:[], sync:{}};
   localStorage.setItem("calculai:v1", JSON.stringify({data, progress:{status:{}, attempts:[], errors:[], days:{}, sessions:[], dayLoad:{}, lastLesson:""}, savedAt:new Date().toISOString()}));
 }'''
-LESSON = '<!doctype html><html><head><meta charset="utf-8"><title>Clase</title></head><body><h1>Newton de prueba</h1><div id="status"><button data-s="Practicado">Practicado</button></div><script>document.querySelector("button").onclick=function(){try{localStorage.setItem("F2-status",JSON.stringify("Practicado"))}catch(e){}};</script></body></html>'
+LESSON = '<!doctype html><html><head><meta charset="utf-8"><title>Clase</title></head><body><nav><a href="#teoria">Teoría</a> <a href="otra.html">Otra</a></nav><h1>Newton de prueba</h1><div style="height:3000px"></div><h2 id="teoria">Teoría</h2><div style="height:1500px"></div><div id="status"><button data-s="Practicado">Practicado</button></div><script>document.querySelector("button").onclick=function(){try{localStorage.setItem("F2-status",JSON.stringify("Practicado"))}catch(e){}};</script></body></html>'
 PACK = {'app': 'calculai', 'v': 1, 'lessons': [
     {'key': 'https://claude.ai/artifact/PRUEBA-F2', 'code': 'F2', 'title': 'Newton', 'html': LESSON},
     {'key': 'https://claude.ai/artifact/PRUEBA-A1', 'code': 'A1', 'title': 'Sistemas', 'html': LESSON.replace('Newton', 'Sistemas')}]}
@@ -89,9 +89,27 @@ async def main():
 
             print('1. Arranque y pestañas')
             await pg.evaluate(SEED); await pg.reload(); await pg.wait_for_timeout(500)
-            for t in ['Ahora', 'Clases', 'Mapa', 'Práctica', 'Errores', 'Calendario', 'Biblioteca', 'Editar']:
+            for t in ['Ahora', 'Clases', 'Mapa', 'Práctica', 'Calendario', 'Biblioteca', 'Editar']:
                 await pg.click(f'.tab:has-text("{t}")'); await pg.wait_for_timeout(150)
             check(not errs, f'todas las pestañas abren sin errores {errs[:2]}')
+            await pg.click('.tab:has-text("Práctica")'); await pg.click('.prac-sec button:has-text("Banco de errores")'); await pg.wait_for_timeout(200)
+            check(await pg.locator('h2:has-text("Banco de errores")').count() == 1 and await pg.locator('.tab:has-text("Errores")').count() == 0, 'el banco de errores está dentro de Práctica (sin pestaña aparte)')
+            await pg.evaluate("go('errores')"); await pg.wait_for_timeout(150)
+            check(await pg.evaluate('tab') == 'practica' and await pg.locator('h2:has-text("Banco de errores")').count() == 1, 'los botones «Ver errores» siguen llevando al banco')
+
+            print('1b. Plan de estudio en el calendario')
+            await pg.click('.tab:has-text("Calendario")'); await pg.wait_for_timeout(200)
+            check(await pg.locator('.plancard h3:has-text("¿Cuánto quieres estudiar?")').count() == 1, 'el calendario pregunta cuánto quieres estudiar')
+            await pg.click('.plancard button:has-text("Armar mi plan")'); await pg.wait_for_timeout(400)
+            order = await pg.evaluate("Object.values(buildPlan().days).flat().filter(x=>!x.rev).map(x=>x.t.id)")
+            check(order[:2] == ['t1', 't2'], f'las clases se agendan en orden desde el inicio de la materia {order}')
+            check('t3' not in order, 'una materia sin evaluaciones no entra al plan')
+            check(await pg.locator('.mp').count() >= 2, 'las clases del plan aparecen en los días del calendario')
+            await pg.click('.tab:has-text("Ahora")'); await pg.wait_for_timeout(200)
+            check(await pg.locator('.plancard.today').count() == 1, '«Ahora» muestra lo que toca hoy según el plan')
+            await pg.evaluate("setStatus('t1','dominado'); planPick = 0; render()"); await pg.wait_for_timeout(200)
+            check(await pg.evaluate("Object.values(buildPlan().days).flat().some(x=>!x.rev && x.t.id==='t1' && !x.done)") == False, 'una clase marcada como Dominado sale del plan (o queda como hecha hoy)')
+            await pg.evaluate("delete P.status.t1; save()")
 
             print('2. Paquete de clases')
             await pg.click('.tab:has-text("Editar")'); await pg.wait_for_timeout(200)
@@ -106,7 +124,12 @@ async def main():
             check(await fr.locator('h1').inner_text() == 'Newton de prueba', 'la clase guardada se ve dentro de Calculai')
             iso = await pg.evaluate("(() => { try { document.querySelector('iframe.saved-frame').contentWindow.document; return false; } catch(e){ return true; } })()")
             check(iso, 'la clase está aislada (no puede leer los datos de Calculai)')
-            await fr.locator('button').click(); await pg.wait_for_timeout(300)
+            await fr.locator('a[href="#teoria"]').click(); await pg.wait_for_timeout(900)
+            pos = await fr.locator('#teoria').evaluate('e => e.getBoundingClientRect().top')
+            check(await fr.locator('h1').count() == 1 and pos < 400, f'el índice de la clase («#teoria») baja a esa parte sin salir de la clase ({pos:.0f})')
+            await fr.locator('a[href="otra.html"]').click(); await pg.wait_for_timeout(500)
+            check(await fr.locator('h1').count() == 1, 'un enlace relativo no saca a la clase de su recuadro')
+            await fr.locator('#status button').click(); await pg.wait_for_timeout(300)
             check(await pg.evaluate("st('t2')") == 'practicado', '«Mi estado» de la clase actualiza el estado del tema')
 
             print('3. Revisión automática de WebC (simulada)')
