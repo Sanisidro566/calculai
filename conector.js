@@ -1,3 +1,4 @@
+/* global M */ /* M es la configuración de Moodle que ya existe en cada página de WebC */
 /* Calculai · conector para WebC / Moodle.
    Se ejecuta DENTRO de WebC (con tu sesión ya iniciada) desde el marcador «Enviar a Calculai».
    Lee tus cursos, fechas del calendario, recursos y avisos usando las mismas páginas que ves,
@@ -77,7 +78,6 @@
     bar = el('i'); log = el('div', {class:'clc-log'});
     render([el('h2', {text:'Leyendo WebC…'}), el('div', {class:'clc-bar'}, [bar]), log]);
     var payload = {type:'calculai-webc', v:1, origin:MOODLE, site:(document.title.split('|').pop() || '').trim(), at:new Date().toISOString(), courses:[]};
-    var ids = courses.map(function(c){ return c.id; });
     var now = Math.floor(Date.now() / 1000);
     var events = {};
     step(5, 'Calendario…');

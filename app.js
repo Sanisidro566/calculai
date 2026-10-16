@@ -90,7 +90,6 @@ const cap = s => s.replace(/^./, c => c.toUpperCase());
 const uid = (p = 'x') => p + '-' + Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-3);
 function toast(msg, ms = 2400){ const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('on'), ms); }
 const countdown = d => d === 0 ? 'hoy' : d === 1 ? 'mañana' : d < 0 ? 'ya pasó' : `en ${d} días`;
-const agoTxt = d => d <= 0 ? 'hoy' : d === 1 ? 'ayer' : `hace ${d} días`;
 const plural = (n, a, b) => `${n} ${n === 1 ? a : b}`;
 
 /* =========================================================
@@ -1244,6 +1243,8 @@ function planCard(){
         lateNow.some(x => x.to) ? h('div', null, 'Pasan a la evaluación siguiente: ', lateNow.filter(x => x.to).map(x => `${S(x.t.subj).short} ${x.t.code || x.t.title} (${x.to.name})`).join(', '), '.') : null,
         lateNow.some(x => !x.to) ? h('div', null, 'Quedan fuera del plan: ', lateNow.filter(x => !x.to).map(x => `${S(x.t.subj).short} ${x.t.code || x.t.title}`).join(', '), '.') : null,
         h('div', null, 'Sube las horas por día, agrega días o empieza antes.')) : null,
+      !p.total && !p.late.length ? h('div', {class:'pc-warn'}, h('b', null, 'No hay clases para agendar.'),
+        h('div', null, !exams().some(e => parse(e.date) >= TODAY) ? 'Para armar el plan necesito pruebas, controles o exámenes con fecha. Agrégalos con «+ Evento» o en Editar.' : 'Las materias con evaluaciones próximas no tienen clases pendientes. Crea clases en «Clases → Crear clases con mi material».')) : null,
       p.left.length ? h('div', {class:'pc-warn'}, `${plural(p.left.length, 'clase quedó', 'clases quedaron')} sin día: `, p.left.slice(0, 4).map(x => x.t.code || x.t.title).join(', '), p.left.length > 4 ? '…' : '', '. Sube las horas o agrega días de estudio.') : null,
       h('p', {class:'tiny muted', style:'margin:10px 0 0'}, 'Se reacomoda solo: cuando marcas una clase como Practicado o Dominado, sale del plan y lo demás avanza. La víspera de cada evaluación queda para repaso.'));
   }
@@ -1818,11 +1819,12 @@ function vEditar(v){
     h('p', {class:'tiny muted', style:'margin:0 0 10px'}, storageOk ? 'Tus datos se guardan automáticamente en este navegador. Descarga un respaldo de vez en cuando, o para pasarlos a otro equipo.' : '⚠ Este navegador no está guardando datos (¿modo incógnito?). Descarga un respaldo antes de cerrar.'),
     h('div', {style:'display:flex;gap:8px;flex-wrap:wrap'},
       h('button', {class:'btn small', type:'button', onclick:() => download(`calculai-respaldo-${iso(TODAY)}.json`, JSON.stringify({app:'calculai', v:1, data:D, progress:P}, null, 1), 'application/json')}, '⇩ Respaldo completo'),
-      h('button', {class:'btn ghost small', type:'button', onclick:() => download(`calculai-plantilla-${iso(TODAY)}.json`, JSON.stringify({app:'calculai', v:1, data:{...D, owner:''}}, null, 1), 'application/json'), title:'Materias, fechas, temas y ejercicios, sin tu progreso'}, '⇩ Plantilla para compartir'),
+      h('button', {class:'btn ghost small', type:'button', onclick:() => download(`calculai-plantilla-${iso(TODAY)}.json`, JSON.stringify({app:'calculai', v:1, data:shareTemplate()}, null, 1), 'application/json'), title:'Materias, fechas, clases y ejercicios, sin tu progreso ni tus datos de WebC'}, '⇩ Plantilla para compartir'),
+      h('button', {class:'btn ghost small', type:'button', onclick:copyInvite, title:'Copia el enlace con instrucciones cortas'}, '✉ Invitar a un compañero'),
       h('button', {class:'btn ghost small', type:'button', onclick:() => file.click()}, '⇪ Abrir archivo'), file,
       h('button', {class:'btn ghost small', type:'button', onclick:shareToDevice, title:'Envía tu respaldo al celular u otro equipo'}, '📱 Pasar a otro dispositivo'),
       h('button', {class:'btn danger small', type:'button', onclick:() => { if (confirm('¿Borrar todos los datos de este navegador? Descarga antes un respaldo si los quieres.')){ D = blankData(); P = blankProg(); save(); tab = 'ahora'; render(); } }}, 'Borrar todo')),
-    h('p', {class:'tiny muted', style:'margin:10px 0 0'}, 'La plantilla no incluye tu progreso: sirve para que alguien de tu curso parta con las mismas materias, fechas y ejercicios.'),
+    h('p', {class:'tiny muted', style:'margin:10px 0 0'}, 'La plantilla lleva tus materias, fechas, clases escritas en Calculai y ejercicios. No lleva tu progreso, tus avisos ni lo que trajo tu WebC, ni tu API key. Las clases interactivas guardadas (paquete) tampoco van ahí.'),
     h('div', {class:'ai-row', style:'margin-top:12px;align-items:center'},
       h('span', {class:'tiny'}, h('b', null, '▤ Clases guardadas en este dispositivo: '), String(lessonKeys.size)),
       h('button', {class:'btn ghost small', type:'button', onclick:pickLessonFile}, '⇪ Cargar paquete de clases'),
@@ -1998,6 +2000,13 @@ function webcCard(){
 function openWebcHelp(){
   $('#drawer').classList.add('wide');
   openDrawer(h('div', {class:'drawer-head'}, h('div', {style:'flex:1'}, h('h3', null, 'Conectar con WebC')), h('button', {class:'iconbtn', type:'button', 'aria-label':'Cerrar', onclick:closeDrawer}, '✕')), h('div', {class:'drawer-body'}, webcSteps()));
+}
+/* Plantilla para un compañero: sin progreso, sin nombre, sin avisos ni datos de revisión de WebC, sin plan. */
+function shareTemplate(){ return {...D, owner:'', news:[], sync:{}, plan:{}}; }
+async function copyInvite(){
+  const txt = `Te comparto Calculai, la app con la que estudio: ${APP_BASE}\nNo necesita cuenta y todo queda en tu navegador. Conecta tu WebC desde la app, crea clases con el material de tus cursos (en «Clases») y arma tu plan en «Calendario».`;
+  try { if (navigator.share) { await navigator.share({title:'Calculai', text:txt}); return; } } catch (e) { if (e && e.name === 'AbortError') return; }
+  try { await navigator.clipboard.writeText(txt); toast('Invitación copiada: pégala en WhatsApp o donde quieras', 3500); } catch { toast(APP_BASE, 6000); }
 }
 async function shareToDevice(){
   const name = `calculai-respaldo-${iso(TODAY)}.json`, txt = JSON.stringify({app:'calculai', v:1, data:D, progress:P});

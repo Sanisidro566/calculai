@@ -7,7 +7,7 @@ Levanta un servidor local, abre la app en Chromium sin conexión a WebC real y c
 lo que no se puede romper. Usa solo datos inventados: nunca pongas aquí datos ni clases reales.
 Termina con «TODO OK» o con la lista de fallas (código de salida 1).
 """
-import asyncio, json, os, re, socket, subprocess, sys, tempfile, time
+import asyncio, base64, io, json, os, re, socket, subprocess, sys, tempfile, time, zipfile
 from playwright.async_api import async_playwright
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -25,7 +25,7 @@ SEED = r'''() => {
   const inD = n => { const d = new Date(); d.setDate(d.getDate()+n); return iso(d); };
   const data = {v:1, owner:"Prueba", subjects:[
       {id:"s1", name:"Física de prueba", short:"Física", code:"FIS101", color:"naranja"},
-      {id:"s2", name:"Álgebra de prueba", short:"Álgebra", code:"MAT113", color:"violeta", webc:23073}],
+      {id:"s2", name:"Álgebra de prueba", short:"Álgebra", code:"MAT113", color:"violeta", webc:10002}],
     events:[{id:"e1", subj:"s1", kind:"prueba", name:"Prueba 2", date:inD(10), time:"09:00", ver:true, topics:[]},
             {id:"e2", subj:"s1", kind:"control", name:"Control 2", date:inD(2), time:"10:00", ver:false, topics:[]}],
     topics:[
@@ -41,6 +41,65 @@ PACK = {'app': 'calculai', 'v': 1, 'lessons': [
     {'key': 'https://claude.ai/artifact/PRUEBA-F2', 'code': 'F2', 'title': 'Newton', 'html': LESSON},
     {'key': 'https://claude.ai/artifact/PRUEBA-A1', 'code': 'A1', 'title': 'Sistemas', 'html': LESSON.replace('Newton', 'Sistemas')}]}
 
+# ---------- Archivos de curso inventados (PDF y PowerPoint mínimos) ----------
+def mini_pdf(pages):
+    objs = [b'<< /Type /Catalog /Pages 2 0 R >>', None, b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>']; kids = []
+    for lines in pages:
+        c = b'BT /F1 12 Tf 50 750 Td 16 TL ' + b' '.join(b'(' + l.encode('cp1252') + b') Tj T*' for l in lines) + b' ET'
+        objs.append(b'<< /Length %d >>\nstream\n' % len(c) + c + b'\nendstream')
+        objs.append(b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents %d 0 R >>' % len(objs)); kids.append(len(objs))
+    objs[1] = b'<< /Type /Pages /Kids [' + b' '.join(b'%d 0 R' % k for k in kids) + b'] /Count %d >>' % len(kids)
+    out, offs = b'%PDF-1.4\n', []
+    for i, o in enumerate(objs): offs.append(len(out)); out += b'%d 0 obj\n' % (i + 1) + o + b'\nendobj\n'
+    x = len(out); out += b'xref\n0 %d\n0000000000 65535 f \n' % (len(objs) + 1) + b''.join(b'%010d 00000 n \n' % o for o in offs)
+    return out + b'trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n' % (len(objs) + 1, x)
+def mini_pptx(slides):
+    b = io.BytesIO(); z = zipfile.ZipFile(b, 'w', zipfile.ZIP_DEFLATED)
+    for i, t in enumerate(slides, 1): z.writestr(f'ppt/slides/slide{i}.xml', '<p:sld xmlns:a="a" xmlns:p="p">' + ''.join(f'<a:p><a:r><a:t>{x}</a:t></a:r></a:p>' for x in t) + '</p:sld>')
+    z.close(); return b.getvalue()
+FRASE = 'La segunda ley de Newton dice que la fuerza neta es igual a la masa por la aceleracion. '
+PDF = mini_pdf([['Dinamica de prueba', FRASE[:80], FRASE[80:]] + [FRASE[:80]] * 5, ['Ejemplo: 2 kg y 10 N dan 5 m/s2.'] + [FRASE[:80]] * 5])
+CLASE = '''Aquí va:
+
+# {t}
+
+## Objetivo
+Usar la segunda ley.
+
+## Mapa
+- Antes: vectores.
+
+## Teoría
+La fuerza neta produce aceleración.
+
+## Fórmulas
+
+$$F = m a$$
+
+## Procedimiento
+1. Dibuja el diagrama.
+
+## Ejemplos resueltos
+Un bloque de 2 kg con 10 N acelera 5 m/s².
+
+## Errores típicos
+- Olvidar el peso.
+
+## Ejercicios
+1. Bloque de 4 kg con 8 N.
+
+## Soluciones
+1. 2 m/s².
+
+## Verificación de dominio
+- ¿Qué es la fuerza neta?
+
+```ejercicios
+[{{"tipo":"numerica","pregunta":"4 kg y 8 N: ¿aceleración?","respuesta":2,"tolerancia":0.01,"unidad":"m/s²","explicacion":"a = F/m"}},
+ {{"tipo":"alternativas","pregunta":"¿Unidad de fuerza?","opciones":["Newton","Joule"],"correcta":0,"explicacion":"N"}}]
+```
+'''
+
 # ---------- WebC simulado (lo que respondería Moodle) ----------
 NOW = int(time.time())
 def webc(method, url, data):
@@ -49,33 +108,36 @@ def webc(method, url, data):
     if 'service.php' in url:
         fn = re.search(r'info=(\w+)', url).group(1)
         if fn == 'core_course_get_enrolled_courses_by_timeline_classification':
-            d = {'courses': [{'id': 23482, 'fullname': 'FÍSICA I Sec.3', 'shortname': 'X-FIS101-3'},
-                             {'id': 23073, 'fullname': 'ÁLGEBRA LINEAL Sec.8', 'shortname': 'X-MAT113-8'},
+            d = {'courses': [{'id': 10001, 'fullname': 'FÍSICA I Sec.3', 'shortname': 'X-FIS101-3'},
+                             {'id': 10002, 'fullname': 'ÁLGEBRA LINEAL Sec.8', 'shortname': 'X-MAT113-8'},
                              {'id': 99999, 'fullname': 'CÁLCULO II Sec.2', 'shortname': 'X-MAT114-2'}]}
         elif fn == 'core_calendar_get_action_events_by_timesort':
-            d = {'events': [{'id': 7001, 'name': 'Vencimiento de Entrega lab', 'timesort': NOW + 5 * 86400, 'modulename': 'assign', 'course': {'id': 23482}, 'url': 'https://webc.uai.cl/mod/assign/view.php?id=9'}]}
+            d = {'events': [{'id': 7001, 'name': 'Vencimiento de Entrega lab', 'timesort': NOW + 5 * 86400, 'modulename': 'assign', 'course': {'id': 10001}, 'url': 'https://webc.uai.cl/mod/assign/view.php?id=9'}]}
         else:
             d = {'events': []}
         return 200, url, json.dumps([{'error': False, 'data': d}])
-    if 'course/view.php?id=23482' in url:
+    if 'course/view.php?id=10001' in url:
         return 200, url, '<div id="region-main"><li class="section" data-sectionname="General"><a href="https://webc.uai.cl/mod/forum/view.php?id=1"><span class="instancename">Avisos</span></a><a href="https://webc.uai.cl/mod/resource/view.php?id=2"><span class="instancename">Guía 10</span></a></li></div>'
     if 'course/view.php' in url:
         return 200, url, '<div id="region-main"></div>'
     if 'forum/view.php?id=1' in url:
         return 200, url, '<a href="https://webc.uai.cl/mod/forum/discuss.php?d=500">Cambio de fecha</a>'
+    if 'mod/resource/view.php?id=2' in url:
+        return 200, 'https://webc.uai.cl/pluginfile.php/9/mod_resource/content/1/Gu%C3%ADa%2010.pdf', '', base64.b64encode(PDF).decode(), 'Content-Type: application/pdf\r\n'
     if 'discuss.php?d=500' in url:
         return 200, url, '<article>Cambio de fecha\nde Profe - lunes, 12 de octubre de 2026, 10:00\nEl informe se entrega el viernes 30 de octubre a las 22:00.\nEl Control 2 se cambia al 5 de noviembre a las 11:30.</article>'
     return 404, url, ''
 
-GM_SHIM = "window.GM_xmlhttpRequest = function(o){ window.__gm(o.method, o.url, o.data || '').then(function(r){ o.onload({status:r[0], finalUrl:r[1], responseText:r[2]}); }, function(){ o.onerror && o.onerror(); }); };"
+GM_SHIM = "window.GM_xmlhttpRequest = function(o){ window.__gm(o.method, o.url, o.data || '').then(function(r){ var buf = r[3] ? Uint8Array.from(atob(r[3]), function(c){ return c.charCodeAt(0); }).buffer : null; o.onload({status:r[0], finalUrl:r[1], responseText:r[2], response:buf, responseHeaders:r[4] || ''}); }, function(){ o.onerror && o.onerror(); }); };"
 
 async def main():
     srv = subprocess.Popen([sys.executable, '-m', 'http.server', str(PORT), '--bind', '127.0.0.1'], cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(50):
         try: socket.create_connection(('127.0.0.1', PORT), timeout=.2).close(); break
         except OSError: time.sleep(.1)
-    pack_file = os.path.join(tempfile.mkdtemp(), 'paquete-prueba.json')
+    tmp = tempfile.mkdtemp(); pack_file = os.path.join(tmp, 'paquete-prueba.json'); pptx_file = os.path.join(tmp, 'trabajo.pptx')
     json.dump(PACK, open(pack_file, 'w'))
+    open(pptx_file, 'wb').write(mini_pptx([['Trabajo y energía de prueba', 'W = F d'] + [FRASE[:70]] * 3]))
     try:
         async with async_playwright() as p:
             b = await p.chromium.launch()
@@ -143,7 +205,7 @@ async def main():
             await pg.wait_for_timeout(2500)
             strip = await pg.inner_text('#syncStrip')
             check('WebC revisado' in strip, 'la barra muestra «WebC revisado»')
-            check(await pg.evaluate("D.subjects.find(s=>s.id==='s1').webc") == 23482, 'la materia se vincula por código (FIS101)')
+            check(await pg.evaluate("D.subjects.find(s=>s.id==='s1').webc") == 10001, 'la materia se vincula por código (FIS101)')
             check(await pg.evaluate("D.events.some(e=>e.webc==='cal:7001')"), 'la fecha del calendario de WebC se agrega')
             check(await pg.evaluate("D.resources.some(r=>r.title==='Guía 10')"), 'el recurso nuevo se agrega')
             check(await pg.evaluate("D.sync.inbox.filter(x=>!x.replaces).length") == 1, 'la fecha encontrada en un aviso queda en «Para revisar»')
@@ -175,6 +237,35 @@ async def main():
             check('propia pestaña' in await fpg.frame_locator('iframe').locator('body').inner_text(), 'Calculai no funciona dentro de otra página')
             await fpg.close()
             check(await pg.evaluate("!!document.querySelector('meta[http-equiv=\"Content-Security-Policy\"]')"), 'la página tiene política de seguridad (CSP)')
+
+            print('5. Crear clases con mi material (IA simulada)')
+            CORS = {'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'GET,POST,OPTIONS'}
+            async def ia(route):
+                rq = route.request
+                if rq.method == 'OPTIONS': return await route.fulfill(status=204, headers=CORS)
+                if '/models?' in rq.url: return await route.fulfill(status=200, headers={**CORS, 'content-type': 'application/json'}, body=json.dumps({'models': [{'name': 'models/gemini-9.0-flash', 'supportedGenerationMethods': ['generateContent']}]}))
+                pr = json.loads(rq.post_data)['contents'][0]['parts'][0]['text']
+                txt = json.dumps({'clases': [{'titulo': 'Newton aplicado', 'cubre': 'F = ma'}, {'titulo': 'Trabajo', 'cubre': 'W = F d'}]}) if 'Responde SOLO con JSON' in pr else CLASE.format(t=re.search(r'«([^»]+)»\.\nDebe', pr).group(1))
+                await route.fulfill(status=200, headers={**CORS, 'content-type': 'application/json'}, body=json.dumps({'candidates': [{'content': {'parts': [{'text': txt}]}}]}))
+            await ctx.route(re.compile(r'https://generativelanguage\.googleapis\.com/.*'), ia)
+            await pg.evaluate("localStorage.setItem('calculai-ai-provider','gemini'); localStorage.setItem('calculai-ai-key','PRUEBA'); lessonOpen = null; classSubj = 's1'; go('clases')")
+            await pg.wait_for_timeout(200)
+            await pg.click('.sec-title button:has-text("Crear clases con mi material")'); await pg.wait_for_timeout(300)
+            await pg.check('#genBody .gen-list label:has-text("Guía 10") input')
+            async with pg.expect_file_chooser() as fc:
+                await pg.click('#genBody button:has-text("Subir archivos")')
+            await (await fc.value).set_files(pptx_file)
+            await pg.click('#genBody button:has-text("Leer material")'); await pg.wait_for_timeout(4000)
+            leidos = await pg.locator('.gen-read li').count()
+            check(leidos == 2 and await pg.locator('.gen-err li').count() == 0, f'lee un PDF traído de WebC por el script y un PowerPoint subido ({leidos} de 2)')
+            await pg.click('#genBody button:has-text("Proponer clases")'); await pg.wait_for_timeout(1200)
+            await pg.click('#genBody button:has-text("Crear las clases elegidas")'); await pg.wait_for_timeout(2500)
+            gen = await pg.evaluate("D.topics.filter(t => t.gen).map(t => [t.code, t.title, t.pre.length, D.items.filter(i => i.topic === t.id).length])")
+            check(len(gen) == 2 and gen[0][3] == 2 and gen[1][2] == 1, f'crea las clases en orden, con sus ejercicios para Práctica {gen}')
+            await pg.evaluate("openLesson(D.topics.find(t => t.gen).id)"); await pg.wait_for_timeout(500)
+            check(await pg.locator('.lc-toc .chip').count() >= 8, 'la clase creada tiene su índice (Objetivo, Mapa, Teoría…)')
+            check(topics_before == await pg.evaluate("JSON.stringify(D.topics.filter(t => !t.gen))"), 'crear clases no cambia las clases que ya tenías')
+            await pg.evaluate("localStorage.removeItem('calculai-ai-key'); lessonOpen = null")
 
             print('4. Recarga y celular')
             await pg.reload(); await pg.wait_for_timeout(800)
