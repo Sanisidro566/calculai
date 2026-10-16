@@ -1,4 +1,4 @@
-/* Calculai — app de estudio. Funciona en cualquier navegador; los datos viven en este dispositivo. */
+/* CalculAi — app de estudio. Funciona en cualquier navegador; los datos viven en este dispositivo. */
 'use strict';
 /* ===========================================================================
    ÍNDICE (busca el título de la sección tal cual; no uses números de línea)
@@ -9,6 +9,8 @@
    NAVEGACIÓN ............ TABS, go(), render() y las vistas:
                            vWelcome · vAhora · vMapa · vPractica (con vErrores adentro) · vCal (vMonth, vAgenda, plan) · vBiblio
    CLASES ................ vClases, vLesson, visor de Drive/YouTube/PDF (embedUrl, viewer)
+     · Estudiar para ..... vEvalStudy: qué entra (texto/pauta), clases que entran (e.topics), aiOrPaste,
+                           evalDetectPrompt/evalApplyDetect, ejercicios tipo prueba (evalAddItems)
      · Clases guardadas .. paquete de clases en IndexedDB «calculai-clases» (ldbPut/ldbGet, savedFrame, importPack)
      · IA ................ AI_MODES, aiPrompt, callAI (Google/Anthropic/OpenAI), aiConfigEl, openAIPanel
    GENERADOR DE CLASES ... openGenerator: lee PDF/pptx/docx (readMaterial, vendor/pdfjs), trae archivos de WebC
@@ -16,7 +18,7 @@
                            parseLessons → addGenerated (temas con content + ejercicios)
    EDITAR ................ formularios, vEditar, respaldo, importFile/importPack
    MODO ENFOQUE · BUSCADOR (Ctrl+K) · EJEMPLO (makeExample)
-   CONECTAR CON WEBC ..... marcador «Enviar a Calculai» (conector.js): receiveWebc, prepareWebc, vWebcReview
+   CONECTAR CON WEBC ..... marcador «Enviar a CalculAi» (conector.js): receiveWebc, prepareWebc, vWebcReview
    REVISIÓN AUTOMÁTICA ... script calculai-sync.user.js: requestWebcSync, applyAutoWebc, novedadesCard,
                            Outlook (msConnect, outlookSync), syncStrip/paintSync, inboxCard
    TEMA, PWA, ARRANQUE ... tema claro/oscuro, service worker, arranque (startAutoSync, loadLessonKeys)
@@ -36,7 +38,7 @@
 const $ = s => document.querySelector(s);
 /* Seguridad: un enlace o recuadro solo puede apuntar a la web (https/http), a un correo, a un archivo creado
    aquí (blob:) o a una dirección relativa. Así un archivo compartido no puede colar «javascript:» u otros
-   esquemas que ejecuten código dentro de Calculai. La única excepción es el marcador «Enviar a Calculai». */
+   esquemas que ejecuten código dentro de CalculAi. La única excepción es el marcador «Enviar a CalculAi». */
 function urlOk(v){ v = String(v).trim(); let bm = ''; try { bm = BOOKMARKLET; } catch {} if (bm && v === bm) return true; const m = v.match(/^([a-z][a-z0-9+.-]*):/i); return !m || /^(https?|mailto|blob)$/i.test(m[1]); }
 function openExt(url){ if (url && /^https?:\/\//i.test(String(url).trim())) window.open(url, '_blank', 'noopener'); else if (url) toast('Ese enlace no es una dirección web'); }
 function h(tag, attrs, ...kids){
@@ -145,7 +147,12 @@ function evidence(tid){ const a = P.attempts.filter(x => D.items.find(i => i.id 
    MOTOR «¿QUÉ HAGO AHORA?» — siempre explica por qué
    ========================================================= */
 function nextExam(sid, from = TODAY){ return exams().filter(e => e.subj === sid && !(e.topics && e.topics.length) && parse(e.date) >= from)[0]; }
-function examFor(t){ if (t.exam){ const e = exams().find(x => x.id === t.exam && parse(x.date) >= TODAY); if (e) return e; } return nextExam(t.subj); }
+function examFor(t){
+  if (t.exam){ const e = exams().find(x => x.id === t.exam && parse(x.date) >= TODAY); if (e) return e; }
+  /* Si elegiste las clases que entran en una evaluación («Estudiar para»), cuenta la más cercana de las dos. */
+  const listed = exams().find(x => (x.topics || []).includes(t.id) && parse(x.date) >= TODAY), gen = nextExam(t.subj);
+  return listed && (!gen || listed.date <= gen.date) ? listed : gen || listed;
+}
 function score(t){
   const ex = examFor(t); if (!ex) return {u:0, why:[]};
   const d = Math.max(0, diffDays(TODAY, parse(ex.date)));
@@ -211,7 +218,7 @@ function renderTabs(){
   const openErr = P.errors.filter(e => !e.resolved).length;
   TABS.forEach(t => {
     const cnt = t.k === 'practica' && openErr ? openErr : 0;
-    const onTab = () => { if (t.k === 'clases' && tab === 'clases') lessonOpen = null; go(t.k); };
+    const onTab = () => { if (t.k === 'clases' && tab === 'clases'){ lessonOpen = null; evalOpen = null; } go(t.k); };
     nav.append(h('button', {class:'tab', role:'tab', type:'button', 'aria-selected':String(tab === t.k), onclick:onTab},
       h('span', {class:'ti'}, t.i), t.l,
       cnt ? h('span', {class:'count'}, cnt) : null));
@@ -241,7 +248,7 @@ function vWelcome(v){
     h('p', {class:'note', style:'margin:0 0 6px'}, 'calculai · tu plan de estudio'),
     webcOn() && SYNC.first ? syncStrip() : null,
     h('h1', null, 'Estudia con un plan, ', h('span', {class:'hl'}, 'no con culpa.')),
-    h('p', {class:'muted', style:'font-size:1.05rem'}, 'Agrega tus materias, evaluaciones y temas. Calculai te dice qué estudiar en la próxima hora y por qué, te hace practicar con honestidad y te avisa lo que viene.'),
+    h('p', {class:'muted', style:'font-size:1.05rem'}, 'Agrega tus materias, evaluaciones y temas. CalculAi te dice qué estudiar en la próxima hora y por qué, te hace practicar con honestidad y te avisa lo que viene.'),
     h('div', {class:'choices'},
       h('button', {class:'choice', type:'button', onclick:startEmpty}, h('span', {class:'ico'}, '✎'), h('b', null, 'Empezar desde cero'), h('span', null, 'Creo mi primera materia y voy agregando lo demás.')),
       h('button', {class:'choice', type:'button', onclick:() => { D = makeExample(); P = blankProg(); save(); go('ahora'); toast('Cargué un ejemplo: edítalo o bórralo cuando quieras'); }}, h('span', {class:'ico'}, '◎'), h('b', null, 'Ver un ejemplo'), h('span', null, 'Tres materias de muestra para conocer la app. Después lo borras.')),
@@ -255,10 +262,10 @@ function vWelcome(v){
       h('div', null, h('b', null, 'Calendario'), 'Con fechas confirmadas o no, y exportable a Google Calendar.')),
     h('div', {class:'card welcome-howto'}, h('b', null, '¿Te lo compartió alguien de tu curso?'),
       h('ol', {class:'tiny'},
-        h('li', null, 'Toca «Conectar con WebC»: abres WebC, copias un enlace y lo pegas aquí. No se instala nada y desde ahí Calculai revisa WebC solo cada vez que la abres.'),
+        h('li', null, 'Toca «Conectar con WebC»: abres WebC, copias un enlace y lo pegas aquí. No se instala nada y desde ahí CalculAi revisa WebC solo cada vez que la abres.'),
         h('li', null, 'En «Clases», toca «✦ Crear clases con mi material»: elige los archivos de tu curso y se arman clases con ejercicios.'),
         h('li', null, 'En «Calendario», dime cuántas horas quieres estudiar y reparto las clases en los días que quedan.'))),
-    h('p', {class:'tiny muted', style:'margin-top:22px'}, 'Privacidad: todo se guarda solo en este dispositivo y navegador. Nada se envía a ningún servidor de Calculai. Si conectas una IA, el material que elijas se envía directo a ese proveedor. Usa «Editar → Respaldo» para llevar tus datos a otro equipo.')));
+    h('p', {class:'tiny muted', style:'margin-top:22px'}, 'Privacidad: todo se guarda solo en este dispositivo y navegador. Nada se envía a ningún servidor de CalculAi. Si conectas una IA, el material que elijas se envía directo a ese proveedor. Usa «Editar → Respaldo» para llevar tus datos a otro equipo.')));
 }
 /* Primera conexión con el script (sin materias todavía): lista tus cursos y trae los que elijas a la revisión. */
 function firstConnect(){
@@ -270,7 +277,7 @@ function firstPicker(list){
   $('#drawer').classList.add('wide');
   openDrawer(h('div', {class:'drawer-head'}, h('div', {style:'flex:1'}, h('h3', null, 'Tus cursos en WebC')), h('button', {class:'iconbtn', type:'button', 'aria-label':'Cerrar', onclick:closeDrawer}, '✕')),
     h('div', {class:'drawer-body'},
-      h('p', {class:'tiny muted', style:'margin:0 0 10px'}, 'Elige los cursos que quieres estudiar con Calculai. Después revisas lo que llegó antes de guardarlo.'),
+      h('p', {class:'tiny muted', style:'margin:0 0 10px'}, 'Elige los cursos que quieres estudiar con CalculAi. Después revisas lo que llegó antes de guardarlo.'),
       h('div', {class:'gen-list', style:'max-height:none'}, list.map(c => h('label', {class:'chk'}, h('input', {type:'checkbox', checked:true, onchange:e => { e.target.checked ? pick.add(c.id) : pick.delete(c.id); }}), h('span', null, c.name, ' ', h('small', {class:'muted'}, c.code || ''))))),
       h('button', {class:'btn hlbtn', type:'button', style:'margin-top:12px', onclick:() => { if (!pick.size){ toast('Elige al menos un curso'); return; } closeDrawer(); SYNC.addCourses = [...pick]; SYNC.first = true; requestWebcSync(true, SYNC.addCourses); render(); toast('Leyendo tus cursos… puede tardar un minuto'); }}, 'Traer estos cursos')));
 }
@@ -340,7 +347,7 @@ function vAhora(v){
   grid.append(h('section', null,
     upcoming.length ? h('div', {class:'examlist'}, upcoming.slice(0, 6).map(e => {
       const d = diffDays(TODAY, parse(e.date));
-      return h('div', {class:'exam', style:scs(e.subj)},
+      return h('div', {class:'exam exam-link', style:scs(e.subj), role:'button', tabindex:'0', title:'Estudiar para esta evaluación', onclick:() => openEvalStudy(e.id), onkeydown:ev => { if (ev.key === 'Enter') openEvalStudy(e.id); }},
         h('div', {class:'dd'}, h('b', null, d), h('small', null, d === 1 ? 'día' : 'días')),
         h('div', null, h('h4', null, `${S(e.subj).name} · ${e.name}`),
           h('p', null, `${fmtD(parse(e.date))}${e.time ? ' · ' + e.time : e.slot ? ' · ' + e.slot : ''}`),
@@ -352,7 +359,7 @@ function vAhora(v){
   const due = D.topics.filter(t => isDue(t.id));
   v.append(h('div', {class:'sec-title'}, h('h2', null, 'Repasos que vencen'), h('span', {class:'hand'}, due.length ? `${due.length} hoy` : 'nada pendiente')));
   v.append(due.length ? h('div', {class:'duelist'}, due.map(t => h('button', {class:'chip subj-chip', type:'button', style:scs(t.subj) + ';cursor:pointer;min-height:36px', onclick:() => { mapSubj = t.subj; go('mapa'); setTimeout(() => openTopic(t.id), 50); }}, (t.code ? t.code + ' · ' : '') + t.title)))
-    : h('p', {class:'muted'}, 'Cuando marques un tema, Calculai calcula cuándo repasarlo: Aprendiendo y Necesita repaso al día siguiente, Practicado a los 3 días, Dominado a los 7.'));
+    : h('p', {class:'muted'}, 'Cuando marques un tema, CalculAi calcula cuándo repasarlo: Aprendiendo y Necesita repaso al día siguiente, Practicado a los 3 días, Dominado a los 7.'));
 
   if (upcoming.length){
     v.append(h('div', {class:'sec-title'}, h('h2', null, 'Preparación por evaluación'), h('span', {class:'hand'}, 'estimación propia, no predice tu nota')));
@@ -426,7 +433,7 @@ function drawLinks(wrap, svgEl, ts){
     svgEl.append(svg('path', {d:`M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}`, class:W[st(pid)] >= 2 ? 'ready' : ''}));
   }));
 }
-/* Índice de una clase escrita en Calculai: un botón por cada «## sección» (desplaza sin cambiar la dirección). */
+/* Índice de una clase escrita en CalculAi: un botón por cada «## sección» (desplaza sin cambiar la dirección). */
 function lessonToc(body){
   const hs = body ? [...body.querySelectorAll('h4.lc-h')] : [];
   if (hs.length < 3) return null;
@@ -469,7 +476,7 @@ function renderContent(txt){
   return wrap;
 }
 /* =========================================================
-   CLASES — todo se lee dentro de Calculai
+   CLASES — todo se lee dentro de CalculAi
    ========================================================= */
 let lessonOpen = null, classSubj = 'todas';
 function openLesson(id){ if (!topic(id)) return; lessonOpen = id; P.lastLesson = id; save(); closeDrawer(); go('clases'); }
@@ -479,7 +486,7 @@ const hasLesson = t => !!(t.content && t.content.trim());
    Las clases interactivas (HTML) viven en IndexedDB «calculai-clases», no en D:
    así pesan poco en el guardado normal y la revisión de WebC nunca las toca.
    La clave de cada clase es el enlace del tema o recurso (t.url / r.url).
-   Se muestran en un iframe aislado (sandbox sin allow-same-origin): no pueden leer los datos de Calculai.
+   Se muestran en un iframe aislado (sandbox sin allow-same-origin): no pueden leer los datos de CalculAi.
    Lo que la clase guarda en «localStorage» (respuestas, avance) se redirige a calculai-lstate. */
 const LDB = 'calculai-clases';
 let lessonKeys = new Set();
@@ -505,12 +512,12 @@ function savedText(t){ const html = t && t.url && lessonHtmlCache[t.url]; if (!h
 /* Avance que cada clase guarda (su «localStorage»), por enlace de la clase. */
 function lstateAll(){ try { return JSON.parse(localStorage.getItem('calculai-lstate') || '{}') || {}; } catch { return {}; } }
 function lstateSet(key, state){ const all = lstateAll(); all[key] = state; try { localStorage.setItem('calculai-lstate', JSON.stringify(all)); } catch {} }
-/* Script que se antepone a la clase: reemplaza localStorage por una copia que avisa a Calculai cada cambio. */
+/* Script que se antepone a la clase: reemplaza localStorage por una copia que avisa a CalculAi cada cambio. */
 function lessonShim(key){
   const j = v => JSON.stringify(v).replace(/</g, '\\u003c');
   return `<script>(function(){var K=${j(key)},S=${j(lstateAll()[key] || {})};function send(){try{parent.postMessage({type:'calculai-lstate',key:K,state:S},'*')}catch(e){}}var st={getItem:function(k){k=String(k);return Object.prototype.hasOwnProperty.call(S,k)?S[k]:null},setItem:function(k,v){S[String(k)]=String(v);send()},removeItem:function(k){delete S[String(k)];send()},clear:function(){S={};send()},key:function(i){return Object.keys(S)[i]||null},get length(){return Object.keys(S).length}};try{Object.defineProperty(window,'localStorage',{value:st,configurable:true})}catch(e){}${lessonNavFix}})();<\/script>`;
 }
-/* Dentro de la clase (srcdoc), un enlace «#teoria» se resolvía contra la dirección de Calculai y cargaba la app
+/* Dentro de la clase (srcdoc), un enlace «#teoria» se resolvía contra la dirección de CalculAi y cargaba la app
    dentro del recuadro. Aquí: los «#…» desplazan a esa parte, los enlaces web abren en otra pestaña y nada más
    puede sacar a la clase de su recuadro (tampoco un formulario sin destino). */
 const lessonNavFix = "function sc(id){var el=id?(document.getElementById(id)||document.getElementsByName(id)[0]):null;if(el)el.scrollIntoView({behavior:'smooth',block:'start'});else if(!id)window.scrollTo({top:0,behavior:'smooth'})}"
@@ -525,7 +532,7 @@ window.addEventListener('message', ev => {
   if (!fr || JSON.stringify(d.state).length > 300000) return;
   const prev = lstateAll()[d.key] || {};
   lstateSet(d.key, d.state);
-  /* Si en la clase marcas «Mi estado», el tema de Calculai queda con el mismo estado. */
+  /* Si en la clase marcas «Mi estado», el tema de CalculAi queda con el mismo estado. */
   for (const k of Object.keys(d.state)){
     if (!/-status$/.test(k) || d.state[k] === prev[k]) continue;
     let v = String(d.state[k]); try { v = JSON.parse(v); } catch {}
@@ -538,7 +545,7 @@ window.addEventListener('message', ev => {
     }
   }
 });
-/* Muestra una clase guardada dentro de Calculai, en un marco aislado. */
+/* Muestra una clase guardada dentro de CalculAi, en un marco aislado. */
 function savedFrame(url, title){
   const wrap = h('div', {class:'saved-lesson'});
   const frame = h('iframe', {class:'saved-frame', title:title || 'Clase', sandbox:'allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms', 'data-key':url});
@@ -555,7 +562,7 @@ function openSaved(url, title){
   openDrawer(h('div', {class:'drawer-head'}, h('div', {style:'flex:1;min-width:0'}, h('h3', null, title || 'Material')), h('button', {class:'iconbtn', type:'button', 'aria-label':'Cerrar', onclick:closeDrawer}, '✕')),
     h('div', {class:'drawer-body'}, savedFrame(url, title)));
 }
-/* Abre un recurso: guardado → dentro de Calculai; Drive/YouTube/PDF → visor; lo demás → pestaña aparte. */
+/* Abre un recurso: guardado → dentro de CalculAi; Drive/YouTube/PDF → visor; lo demás → pestaña aparte. */
 function openResource(url, title){ if (!url) return; if (lessonKeys.has(url)) openSaved(url, title); else if (embedUrl(url)) openViewer(url, title); else openExt(url); }
 /* Importa un paquete de clases: {app:'calculai', lessons:[{key, code, title, html}], data?, progress?}. */
 async function importLessons(list){
@@ -608,7 +615,7 @@ function lessonCard(t){
   if (saved) ldbGet(t.url); // deja el texto listo para «Adaptar con IA»
   return h('div', {class:'lesson-card'},
     h('div', {class:'lc-info'}, h('b', null, saved ? '▤ Clase interactiva lista' : has ? '▤ Clase lista para leer' : t.url ? '◫ Material del curso' : '▤ Clase sin escribir'),
-      h('small', {class:'muted'}, saved ? 'Guardada en este dispositivo · se ve dentro de Calculai' : has ? `${readMin(t)} min de lectura · dentro de Calculai` : t.url ? (embedUrl(t.url) ? 'Se ve dentro de Calculai' : 'Se abre aparte') : 'Puedes escribirla o pegar una clase preparada')),
+      h('small', {class:'muted'}, saved ? 'Guardada en este dispositivo · se ve dentro de CalculAi' : has ? `${readMin(t)} min de lectura · dentro de CalculAi` : t.url ? (embedUrl(t.url) ? 'Se ve dentro de CalculAi' : 'Se abre aparte') : 'Puedes escribirla o pegar una clase preparada')),
     h('div', {class:'ai-row'},
       h('button', {class:'btn small hlbtn', type:'button', onclick:() => openLesson(t.id)}, has || saved || t.url ? 'Abrir clase' : 'Ir a la clase'),
       h('button', {class:'btn small ai-btn', type:'button', onclick:() => openAIPanel(t)}, '✦ Adaptar con IA')));
@@ -617,8 +624,14 @@ function vClases(v){
   const t = lessonOpen && topic(lessonOpen);
   if (t){ vLesson(v, t); return; }
   lessonOpen = null;
+  const evx = evalOpen && D.events.find(e => e.id === evalOpen);
+  if (evx){ vEvalStudy(v, evx); return; }
+  evalOpen = null;
   v.append(h('div', {class:'sec-title'}, h('h2', null, 'Clases'), h('span', {class:'hand'}, 'todo se lee aquí mismo'),
     h('button', {class:'btn small ai-btn', type:'button', style:'margin-left:auto', onclick:() => openGenerator()}, '✦ Crear clases con mi material')));
+  const ups = exams().filter(e => parse(e.date) >= TODAY).slice(0, 8);
+  if (ups.length) v.append(h('div', {class:'eval-row'}, h('b', {class:'tiny'}, '🎯 Estudiar para:'),
+    ups.map(e => h('button', {class:'chip eval-chip', type:'button', style:scs(e.subj), onclick:() => openEvalStudy(e.id)}, h('span', {class:'dot', style:'background:var(--sc)'}), `${S(e.subj).short} · ${e.name} · ${countdown(diffDays(TODAY, parse(e.date)))}`))));
   const last = P.lastLesson && topic(P.lastLesson);
   const top = ranked()[0];
   const quick = h('div', {class:'cl-quick'},
@@ -628,7 +641,7 @@ function vClases(v){
   const missing = D.topics.filter(x => !lessonReady(x) && /^https:\/\/claude\.ai\//.test(x.url || '')).length;
   if (missing) v.append(h('div', {class:'card lp-empty', style:'margin-top:12px'},
     h('p', {style:'margin:0 0 4px'}, h('b', null, `${plural(missing, 'clase tuya está', 'clases tuyas están')} en claude.ai y todavía no ${missing === 1 ? 'está guardada' : 'están guardadas'} en este dispositivo.`)),
-    h('p', {class:'tiny muted', style:'margin:0 0 8px'}, 'Carga tu paquete de clases (archivo .json) para leerlas dentro de Calculai, aunque WebC no esté conectado.'),
+    h('p', {class:'tiny muted', style:'margin:0 0 8px'}, 'Carga tu paquete de clases (archivo .json) para leerlas dentro de CalculAi, aunque WebC no esté conectado.'),
     h('button', {class:'btn small', type:'button', onclick:pickLessonFile}, '⇪ Cargar paquete de clases')));
   const search = h('input', {type:'search', class:'cl-search', placeholder:'Buscar una clase (título, código o texto)…', 'aria-label':'Buscar clase'});
   v.append(h('div', {class:'filterrow', style:'margin-top:12px'},
@@ -689,7 +702,7 @@ function vLesson(v, t){
   }
   if (saved) page.append(h('article', {class:'card lp-body lp-saved'}, savedFrame(t.url, t.title)));
   if (!hasLesson(t) && !saved) page.append(h('article', {class:'card lp-body'}, h('div', {class:'lp-empty'},
-    h('p', {style:'margin:0 0 6px'}, h('b', null, fromClaude ? 'Esta clase está en claude.ai y todavía no está guardada en este dispositivo.' : 'Esta clase todavía no tiene texto en Calculai.')),
+    h('p', {style:'margin:0 0 6px'}, h('b', null, fromClaude ? 'Esta clase está en claude.ai y todavía no está guardada en este dispositivo.' : 'Esta clase todavía no tiene texto en CalculAi.')),
     h('p', {class:'tiny muted', style:'margin:0 0 10px'}, fromClaude ? 'Carga tu paquete de clases para leerla aquí mismo, sin depender de WebC ni de otra página.' : t.url ? 'Abajo tienes el material del curso. Puedes escribir la clase o pegar una ya preparada con «Escribir clase».' : 'Escríbela o pega una clase preparada con «Escribir clase». Usa # para títulos y $…$ para fórmulas.'),
     h('div', {class:'ai-row'}, fromClaude ? h('button', {class:'btn small', type:'button', onclick:pickLessonFile}, '⇪ Cargar paquete de clases') : null,
       h('button', {class:fromClaude ? 'btn ghost small' : 'btn small', type:'button', onclick:() => openTopicForm(t.id)}, '✎ Escribir clase')))));
@@ -702,6 +715,114 @@ function vLesson(v, t){
     h('nav', {class:'lp-nav', 'aria-label':'Otras clases'},
       prev ? h('button', {class:'btn ghost', type:'button', onclick:() => { openLesson(prev.id); }}, '← ' + prev.title) : h('span'),
       next ? h('button', {class:'btn', type:'button', onclick:() => { openLesson(next.id); }}, next.title + ' →') : h('span')));
+  v.append(page);
+}
+
+/* ---------- Vista: Estudiar para una evaluación ----------
+   Eliges qué entra (texto, pauta, temario o prueba anterior) y qué clases entran (a mano o con IA).
+   Se guarda en el evento: e.topics (clases que entran; vacío = todas las de la materia) y
+   e.study = {text, docs:[{name, text, pages}], gaps:[{titulo, cubre}], note}. El plan, la preparación,
+   «La próxima hora» y Práctica usan e.topics. Desde aquí se crean clases para lo que falta y ejercicios tipo prueba. */
+let evalOpen = null, evalBusy = '';
+function openEvalStudy(id){ evalOpen = id; lessonOpen = null; closeDrawer(); go('clases'); }
+const studyOf = e => { if (!isObj(e.study)) e.study = {}; if (!Array.isArray(e.study.docs)) e.study.docs = []; if (!Array.isArray(e.study.gaps)) e.study.gaps = []; return e.study; };
+const evalDocsText = e => studyOf(e).docs.map(d => `### ${d.name}\n${d.text}`).join('\n\n').slice(0, 60000);
+const codeOf = t => t.code || t.id;
+function evalList(e){ const all = lessonOrder(e.subj); return e.topics && e.topics.length ? all.filter(t => e.topics.includes(t.id)) : all; }
+function evalDetectPrompt(e){
+  const st0 = studyOf(e), docs = evalDocsText(e);
+  return `Evaluación: «${S(e.subj).name} · ${e.name}» (${fmtD(parse(e.date))}).\n\nLo que entra, según el estudiante:\n${st0.text || '(no escribió nada)'}\n${docs ? `\nDocumentos que subió (pauta, temario o prueba anterior):\n${docs}\n` : ''}\nClases disponibles de la asignatura (código: título):\n${lessonOrder(e.subj).map(t => `${codeOf(t)}: ${t.title}`).join('\n') || '(ninguna todavía)'}\n\nResponde SOLO con JSON válido:\n{"entra":["C01","C02"],"falta":[{"titulo":"…","cubre":"…"}],"comentario":"una o dos frases"}\n- «entra»: códigos de las clases cuyos contenidos aparecen en la evaluación.\n- «falta»: contenidos que entran pero que ninguna clase cubre.\nUsa solo lo que dicen el texto y los documentos. Si no alcanza para decidir, dilo en «comentario».`;
+}
+function evalItemsPrompt(e){
+  const st0 = studyOf(e), docs = evalDocsText(e), list = evalList(e);
+  return `Crea entre 6 y 10 ejercicios de práctica para «${S(e.subj).name} · ${e.name}», con el estilo, el nivel y el tipo de preguntas de la pauta o prueba anterior de abajo (si hay), y solo sobre lo que entra. Asigna cada ejercicio a una de estas clases (código: título):\n${list.map(t => `${codeOf(t)}: ${t.title}`).join('\n')}\n\nResponde SOLO con JSON válido, una lista:\n[{"clase":"C03","tipo":"alternativas","pregunta":"…","opciones":["…","…","…","…"],"correcta":0,"explicacion":"…"},\n {"clase":"C04","tipo":"numerica","pregunta":"…","respuesta":1.5,"tolerancia":0.01,"unidad":"","explicacion":"…"}]\n«correcta» es la posición de la opción correcta contando desde 0; «tolerancia» es relativa. Las respuestas deben ser correctas y verificables. Fórmulas con $…$.\n\nLo que entra: ${st0.text || '(no escribió nada)'}\n${docs ? `\nDocumentos:\n${docs}` : ''}`;
+}
+function evalApplyDetect(e, txt){
+  const m = String(txt || '').match(/\{[\s\S]*\}/); if (!m){ toast('La respuesta no traía la lista de clases'); return; }
+  let j; try { j = JSON.parse(m[0]); } catch { toast('No pude leer la respuesta (JSON inválido)'); return; }
+  const all = lessonOrder(e.subj), want = (Array.isArray(j.entra) ? j.entra : []).map(x => norm(String(x).trim()));
+  const ids = all.filter(t => want.includes(norm(codeOf(t))) || want.includes(norm(t.title))).map(t => t.id);
+  const st0 = studyOf(e);
+  st0.gaps = (Array.isArray(j.falta) ? j.falta : []).filter(x => x && x.titulo).slice(0, 10).map(x => ({titulo:String(x.titulo).slice(0, 140), cubre:String(x.cubre || '').slice(0, 300)}));
+  st0.note = String(j.comentario || '').slice(0, 400);
+  if (ids.length) e.topics = ids;
+  save(); render();
+  toast(`${plural(ids.length, 'clase marcada', 'clases marcadas')}${st0.gaps.length ? ` · ${plural(st0.gaps.length, 'contenido sin clase', 'contenidos sin clase')}` : ''}`, 4000);
+}
+function evalAddItems(e, txt){
+  const m = String(txt || '').match(/\[[\s\S]*\]/); if (!m){ toast('La respuesta no traía ejercicios'); return; }
+  let a; try { a = JSON.parse(m[0]); } catch { toast('No pude leer la respuesta (JSON inválido)'); return; }
+  const list = evalList(e); if (!list.length){ toast('Primero necesitas clases en esta materia'); return; }
+  let n = 0;
+  (Array.isArray(a) ? a : []).slice(0, 20).forEach(x => { const it = genItem(x); if (!it) return; const t = list.find(y => norm(codeOf(y)) === norm(String(x.clase || ''))) || list[0]; D.items.push({id:uid('q'), topic:t.id, ...it, origin:`Tipo ${e.name} (creado con IA)`}); n++; });
+  save(); render(); toast(n ? `${plural(n, 'ejercicio nuevo', 'ejercicios nuevos')} para ${e.name}` : 'No llegaron ejercicios válidos', 4000);
+}
+/* Con API key consulta directo; sin key, copiar la instrucción y pegar la respuesta. */
+async function aiOrPaste(prompt, opt, onText){
+  if (getAIKey()){
+    evalBusy = 'Consultando a la IA… (puede tardar un minuto)'; render();
+    try { onText(await callAI(prompt, opt)); } catch (e) { toast('No se pudo: ' + (e.message === 'NO_KEY' ? 'falta la API key' : e.message), 5000); }
+    evalBusy = ''; render(); return;
+  }
+  const ans = h('textarea', {class:'ai-need', rows:8, placeholder:'Pega aquí la respuesta completa de tu asistente.'});
+  $('#drawer').classList.add('wide');
+  openDrawer(h('div', {class:'drawer-head'}, h('div', {style:'flex:1'}, h('h3', null, '✦ Pedírselo a tu asistente de IA')), h('button', {class:'iconbtn', type:'button', 'aria-label':'Cerrar', onclick:closeDrawer}, '✕')),
+    h('div', {class:'drawer-body'},
+      h('p', {class:'tiny muted', style:'margin:0 0 8px'}, 'Copia la instrucción (ya trae lo que entra y tus documentos), pégala en el asistente de IA que uses y pega aquí su respuesta.'),
+      h('button', {class:'btn small', type:'button', onclick:async () => { try { await navigator.clipboard.writeText(prompt); toast('Instrucción copiada'); } catch { ans.value = prompt; ans.select(); toast('Copia el texto del cuadro'); } }}, '⧉ Copiar instrucción'),
+      ans, h('div', {class:'ai-row', style:'margin-top:8px'}, h('button', {class:'btn small hlbtn', type:'button', onclick:() => { if (!ans.value.trim()) return; closeDrawer(); onText(ans.value); }}, 'Usar la respuesta')),
+      h('details', {style:'margin-top:12px'}, h('summary', {class:'tiny', style:'cursor:pointer;font-weight:700'}, '⚙ O conecta una IA para hacerlo solo'), aiConfigEl(() => { closeDrawer(); aiOrPaste(prompt, opt, onText); }))));
+}
+async function evalUpload(e, files){
+  const st0 = studyOf(e);
+  for (const f of [...files].slice(0, 6)){
+    evalBusy = `Leyendo ${f.name}…`; render();
+    try { const mt = await readMaterial(f.name, await f.arrayBuffer(), f.type); st0.docs = st0.docs.filter(d => d.name !== mt.name).concat({name:mt.name, pages:mt.pages.length, text:mt.pages.join('\n\n').slice(0, 40000)}).slice(-6); }
+    catch (err) { toast(`${f.name}: ${err.message}`, 5000); }
+  }
+  evalBusy = ''; save(); render();
+}
+function vEvalStudy(v, e){
+  const sb = S(e.subj), all = lessonOrder(e.subj), st0 = studyOf(e), chosen = !!(e.topics && e.topics.length), list = evalList(e), d = diffDays(TODAY, parse(e.date));
+  const done = t => ['practicado', 'dominado'].includes(st(t.id)), nextT = list.find(t => !done(t));
+  const nItems = poolFor('ev:' + e.id).length, openErr = P.errors.filter(x => !x.resolved && list.some(t => (D.items.find(i => i.id === x.item) || {}).topic === t.id)).length;
+  let num = 0; list.forEach(t => { num += W[st(t.id)] / 3; }); const pct = list.length ? Math.round(100 * num / list.length) : 0;
+  const fileIn = h('input', {type:'file', multiple:true, accept:'.pdf,.pptx,.docx,.txt,.md,application/pdf', style:'display:none', onchange:ev => { evalUpload(e, ev.target.files); ev.target.value = ''; }});
+  const planDays = (() => { const p = buildPlan(); if (!p) return null; return Object.entries(p.days).map(([k, xs]) => [k, xs.filter(x => (x.e && x.e.id === e.id))]).filter(([, xs]) => xs.length).slice(0, 6); })();
+  const page = h('div', {class:'lesson-page eval-page', style:scs(e.subj)});
+  page.append(...[
+    h('div', {class:'lp-top'}, h('button', {class:'btn ghost small', type:'button', onclick:() => { evalOpen = null; render(); window.scrollTo({top:0}); }}, '← Clases'), subjChip(e.subj), kindChip(e), verBadge(e)),
+    h('h1', {class:'lp-title'}, `Estudiar para ${sb.short} · ${e.name}`),
+    h('p', {class:'tiny muted', style:'margin:-4px 0 10px'}, `${cap(fmtD(parse(e.date)))}${e.time ? ' · ' + e.time : ''} · ${countdown(d)} · preparación estimada ${pct}% (${plural(list.length, 'clase', 'clases')})`),
+    evalBusy ? h('p', {class:'gen-status tiny', role:'status'}, evalBusy) : null,
+    /* 1. Qué entra */
+    h('section', {class:'card gen-step'}, h('h4', null, '1. ¿Qué entra?'),
+      h('textarea', {class:'ai-need', rows:3, placeholder:'Ej.: entra hasta integrales impropias, sin series; habrá un ejercicio de áreas. Escribe lo que dijo el profesor o el temario.', 'aria-label':'Qué entra', onchange:ev => { st0.text = ev.target.value.slice(0, 4000); save(); }}, st0.text || ''),
+      h('div', {class:'ai-row', style:'margin-top:8px'}, h('button', {class:'btn ghost small', type:'button', onclick:() => fileIn.click()}, '⇪ Subir pauta, temario o prueba anterior'), h('span', {class:'tiny muted'}, 'PDF, PowerPoint, Word o texto'), fileIn),
+      st0.docs.length ? h('ul', {class:'tiny gen-read'}, st0.docs.map(x => h('li', null, `📄 ${x.name} · ${plural(x.pages || 1, 'página', 'páginas')} `, h('button', {class:'linkbtn', type:'button', onclick:() => { st0.docs = st0.docs.filter(y => y !== x); save(); render(); }}, 'quitar')))) : null),
+    /* 2. Clases que entran */
+    h('section', {class:'card gen-step'}, h('h4', null, '2. Clases que entran'),
+      h('p', {class:'tiny muted', style:'margin:0 0 8px'}, chosen ? `Elegiste ${list.length} de ${all.length} clases. El plan, la práctica y la preparación usan solo estas.` : 'Si no eliges ninguna, cuentan todas las clases de la materia.'),
+      all.length ? h('div', {class:'gen-list'}, all.map(t => h('label', {class:'chk'}, h('input', {type:'checkbox', checked:(chosen && e.topics.includes(t.id)) || null, onchange:ev => { const cur = new Set(e.topics || []); ev.target.checked ? cur.add(t.id) : cur.delete(t.id); e.topics = all.filter(x => cur.has(x.id)).map(x => x.id); save(); render(); }}),
+        h('span', null, h('i', {class:'dot', style:`background:var(--s-${st(t.id)})`}), ' ', t.code ? h('b', null, t.code + ' ') : null, t.title)))) : h('p', {class:'tiny muted'}, 'Esta materia todavía no tiene clases.'),
+      h('div', {class:'ai-row', style:'margin-top:8px'},
+        all.length ? h('button', {class:'btn small ai-btn', type:'button', disabled:evalBusy || null, onclick:() => { if (!st0.text && !st0.docs.length){ toast('Primero escribe qué entra o sube la pauta'); return; } aiOrPaste(evalDetectPrompt(e), {max:3000, json:true}, txt => evalApplyDetect(e, txt)); }}, '✦ Detectar con IA') : null,
+        chosen ? h('button', {class:'btn ghost small', type:'button', onclick:() => { e.topics = []; save(); render(); }}, 'Usar todas') : null),
+      st0.note ? h('p', {class:'tiny note', style:'margin:8px 0 0'}, st0.note) : null,
+      st0.gaps.length || st0.docs.length ? h('div', {class:'eval-gaps'},
+        st0.gaps.length ? h('div', null, h('b', {class:'tiny'}, 'Contenidos que entran y no tienen clase:'), h('ul', {class:'tiny'}, st0.gaps.map(g => h('li', null, h('b', null, g.titulo), g.cubre ? ' — ' + g.cubre : '')))) : null,
+        h('button', {class:'btn small ai-btn', type:'button', onclick:() => openGenerator(e.subj, {evalId:e.id, mats:st0.docs.map(x => ({name:x.name, pages:[x.text], chars:x.text.length})), focus:[st0.text, ...st0.gaps.map(g => g.titulo + (g.cubre ? ': ' + g.cubre : ''))].filter(Boolean).join('; ')})}, st0.gaps.length ? '✦ Crear clases para lo que falta' : '✦ Crear clases con estos documentos')) : null),
+    /* 3. Estudiar */
+    h('section', {class:'card gen-step'}, h('h4', null, '3. Estudiar'),
+      planDays && planDays.length ? h('p', {class:'tiny', style:'margin:0 0 8px'}, h('b', null, 'Tu plan: '), planDays.map(([k, xs]) => `${fmtD(parse(k))} (${xs.map(x => x.rev ? 'repaso' : codeOf(x.t)).join(', ')})`).join(' · ')) : h('p', {class:'tiny muted', style:'margin:0 0 8px'}, planCfg().on ? 'El plan no tiene días para esta evaluación.' : h('span', null, 'Para repartir estas clases en días, ', h('button', {class:'linkbtn', type:'button', onclick:() => go('cal')}, 'arma tu plan en Calendario'), '.')),
+      list.length ? h('div', {class:'plist'}, list.map(t => h('div', {class:'prow' + (done(t) ? ' done' : ''), style:scs(t.subj)}, h('span', {class:'pdot'}),
+        h('div', {style:'min-width:0;flex:1'}, h('b', null, (done(t) ? '✓ ' : '') + (t.code ? t.code + ' · ' : '') + t.title), h('div', {class:'tiny muted'}, SL[st(t.id)] + (nextT && nextT.id === t.id ? ' · sigue con esta' : ''))),
+        h('button', {class:nextT && nextT.id === t.id ? 'btn small' : 'btn ghost small', type:'button', onclick:() => openLesson(t.id)}, 'Abrir clase')))) : null,
+      h('div', {class:'ai-row', style:'margin-top:10px'},
+        nextT ? h('button', {class:'btn hlbtn', type:'button', onclick:() => startFocus(nextT, buildSession(nextT))}, `▶ Sesión con ${nextT.code || nextT.title}`) : null,
+        h('button', {class:'btn ghost small', type:'button', disabled:!nItems || null, onclick:() => { pracFilter = 'ev:' + e.id; Q = null; pracSec = 'ejercicios'; go('practica'); }}, `Practicar solo esto (${nItems})`),
+        list.length ? h('button', {class:'btn small ai-btn', type:'button', disabled:evalBusy || null, onclick:() => aiOrPaste(evalItemsPrompt(e), {max:6000, json:true}, txt => evalAddItems(e, txt))}, st0.docs.length ? '✦ Ejercicios tipo prueba (con tu pauta)' : '✦ Ejercicios tipo prueba') : null,
+        openErr ? h('button', {class:'btn ghost small', type:'button', onclick:() => go('errores')}, `⚠ ${plural(openErr, 'error por resolver', 'errores por resolver')}`) : null))].filter(Boolean));
   v.append(page);
 }
 
@@ -739,7 +860,7 @@ const setAIModel = m => lsSet('calculai-ai-model', m);
 
 function aiPrompt(mode, t, need){
   const base = mode ? mode.prompt : 'Adapta esta clase según lo que pide el estudiante.';
-  return `${base}${need ? `\n\nLo que me cuesta o necesito: ${need}` : ''}\n\nReglas: responde en español; usa solo el contenido de la clase (si agregas algo que no está en ella, márcalo como «Complemento»); usa $…$ para fórmulas en línea y $$…$$ en bloques; usa # y ## para títulos.\n\n---\nClase «${t.title}»:\n\n${t.content || savedText(t) || '(La clase no tiene texto escrito en Calculai.' + (t.url ? ' Material: ' + t.url : '') + ')'}`;
+  return `${base}${need ? `\n\nLo que me cuesta o necesito: ${need}` : ''}\n\nReglas: responde en español; usa solo el contenido de la clase (si agregas algo que no está en ella, márcalo como «Complemento»); usa $…$ para fórmulas en línea y $$…$$ en bloques; usa # y ## para títulos.\n\n---\nClase «${t.title}»:\n\n${t.content || savedText(t) || '(La clase no tiene texto escrito en CalculAi.' + (t.url ? ' Material: ' + t.url : '') + ')'}`;
 }
 async function callAI(prompt, opt = {}){
   const key = getAIKey(), provider = getAIProvider(), max = opt.max || 4096;
@@ -870,7 +991,11 @@ function openTopic(id){
 
 /* ---------------- PRÁCTICA ---------------- */
 let Q = null;
-function poolFor(f){ return D.items.filter(i => topic(i.topic) && (f === 'todo' ? true : D.subjects.some(s => s.id === f) ? topic(i.topic).subj === f : i.topic === f)); }
+function poolFor(f){
+  const ev = String(f).startsWith('ev:') ? D.events.find(e => 'ev:' + e.id === f) : null;
+  const evT = ev ? new Set(ev.topics && ev.topics.length ? ev.topics : topicsOf(ev.subj).map(t => t.id)) : null;
+  return D.items.filter(i => topic(i.topic) && (evT ? evT.has(i.topic) : f === 'todo' ? true : D.subjects.some(s => s.id === f) ? topic(i.topic).subj === f : i.topic === f));
+}
 function pickItem(f, exclude){
   const all = poolFor(f); const pool = all.filter(i => i.id !== exclude); if (!pool.length) return all[0];
   const weight = i => { const a = P.attempts.filter(x => x.item === i.id); if (!a.length) return 3; return a.at(-1).ok ? .6 : 2.5; };
@@ -887,12 +1012,15 @@ function vPractica(v){
     h('button', {class:'seg', type:'button', role:'tab', 'aria-selected':String(pracSec !== 'errores'), 'aria-pressed':String(pracSec !== 'errores'), onclick:() => { pracSec = 'ejercicios'; render(); }}, '✎ Ejercicios'),
     h('button', {class:'seg', type:'button', role:'tab', 'aria-selected':String(pracSec === 'errores'), 'aria-pressed':String(pracSec === 'errores'), onclick:() => { pracSec = 'errores'; render(); }}, '⚠ Banco de errores', openErr ? h('span', {class:'count'}, openErr) : null)));
   if (pracSec === 'errores'){ vErrores(v); return; }
-  const isTopic = pracFilter !== 'todo' && !D.subjects.some(s => s.id === pracFilter);
+  if (String(pracFilter).startsWith('ev:') && !D.events.some(e => 'ev:' + e.id === pracFilter)) pracFilter = 'todo';
+  const isEv = String(pracFilter).startsWith('ev:'), pEv = isEv && D.events.find(e => 'ev:' + e.id === pracFilter);
+  const isTopic = !isEv && pracFilter !== 'todo' && !D.subjects.some(s => s.id === pracFilter);
   if (isTopic && !topic(pracFilter)) pracFilter = 'todo';
   v.append(h('div', {class:'filterrow'},
     h('button', {class:'seg', type:'button', 'aria-pressed':String(pracFilter === 'todo'), onclick:() => { pracFilter = 'todo'; Q = null; render(); }}, 'Todo'),
     D.subjects.map(s => h('button', {class:'seg', type:'button', style:scs(s.id), 'aria-pressed':String(pracFilter === s.id), onclick:() => { pracFilter = s.id; Q = null; render(); }}, s.short)),
     isTopic && topic(pracFilter) ? h('button', {class:'seg', type:'button', 'aria-pressed':'true', onclick:() => { pracFilter = 'todo'; Q = null; render(); }}, topic(pracFilter).title + ' ✕') : null,
+    pEv ? h('button', {class:'seg', type:'button', 'aria-pressed':'true', onclick:() => { pracFilter = 'todo'; Q = null; render(); }}, `🎯 ${S(pEv.subj).short} · ${pEv.name} ✕`) : null,
     h('button', {class:'btn ghost small', type:'button', onclick:() => openItemForm(null, isTopic ? pracFilter : null)}, '+ Crear ejercicio')));
   if (!poolFor(pracFilter).length){
     v.append(h('div', {class:'card empty empty-cta', style:'margin-top:18px'}, h('span', {class:'hand'}, 'Aún no hay ejercicios aquí'),
@@ -1018,7 +1146,9 @@ function eventRow(e, compact){
       h('div', {class:'tiny muted'}, whenTxt(e)),
       !compact && e.src ? h('div', {class:'tiny', style:'color:var(--ink-3);margin-top:2px'}, 'Fuente: ' + e.src) : null,
       e.note ? h('div', {class:'tiny note', style:'margin:4px 0 0'}, e.note) : null,
-      compact ? null : h('button', {class:'btn ghost small', type:'button', style:'margin-top:6px', onclick:() => openEventForm(e.id)}, 'Editar')));
+      compact ? null : h('div', {style:'display:flex;gap:6px;flex-wrap:wrap;margin-top:6px'},
+        ['prueba', 'control', 'examen'].includes(e.kind) && parse(e.date) >= TODAY ? h('button', {class:'btn small', type:'button', onclick:() => openEvalStudy(e.id)}, '🎯 Estudiar para esta') : null,
+        h('button', {class:'btn ghost small', type:'button', onclick:() => openEventForm(e.id)}, 'Editar'))));
 }
 /* ---------- Vista: Calendario ---------- */
 function vCal(v){
@@ -1281,7 +1411,7 @@ function todayPlanCard(){
 function exportPlanICS(){
   const p = buildPlan(); if (!p || !p.total){ toast('No hay clases en el plan'); return; }
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, ''), ymd = s => s.replace(/-/g, '');
-  const L = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Calculai//Plan//ES', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', 'X-WR-CALNAME:Calculai — plan de estudio'];
+  const L = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//CalculAi//Plan//ES', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', 'X-WR-CALNAME:CalculAi — plan de estudio'];
   Object.entries(p.days).forEach(([k, xs]) => {
     L.push('BEGIN:VEVENT', `UID:plan-${k}@calculai`, `DTSTAMP:${stamp}`, `DTSTART;VALUE=DATE:${ymd(k)}`, `DTEND;VALUE=DATE:${ymd(iso(addDays(parse(k), 1)))}`,
       icsFold(`SUMMARY:${icsEsc('Estudiar: ' + xs.map(x => x.rev ? 'repaso ' + S(x.subj).short : (x.t.code || x.t.title)).join(', '))}`),
@@ -1311,7 +1441,7 @@ function exportICS(){
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
   const ymd = s => s.replace(/-/g, '');
   const hm = m => pad(Math.floor(m / 60)) + pad(m % 60) + '00';
-  const L = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Calculai//Estudio//ES', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', 'X-WR-CALNAME:Calculai — evaluaciones'];
+  const L = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//CalculAi//Estudio//ES', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', 'X-WR-CALNAME:CalculAi — evaluaciones'];
   D.events.filter(e => e.date && evOn(e)).forEach(e => {
     L.push('BEGIN:VEVENT', `UID:${e.id}@calculai`, `DTSTAMP:${stamp}`);
     const tt = evTimes(e);
@@ -1382,7 +1512,7 @@ function vBiblio(v){
 /* =========================================================
    GENERADOR DE CLASES — clases y ejercicios hechos con el material del curso
    Lee archivos (PDF, PowerPoint .pptx, Word .docx, texto) que la persona sube o que el script trae de
-   WebC, y una IA escribe clases en el formato de Calculai: objetivo, mapa, teoría, fórmulas, procedimiento,
+   WebC, y una IA escribe clases en el formato de CalculAi: objetivo, mapa, teoría, fórmulas, procedimiento,
    ejemplos, errores típicos, ejercicios con soluciones y verificación de dominio. Sin API key, se copia
    una instrucción para pegar en cualquier asistente y se pega la respuesta de vuelta.
    Crea temas (D.topics con content y gen) y ejercicios (D.items). No toca la sincronización.
@@ -1483,8 +1613,9 @@ window.addEventListener('message', ev => {
 const webcFileRes = sid => D.resources.filter(r => r.subj === sid && /^https:\/\/[^/]+\/mod\/(resource|page)\/view\.php\?id=\d+/.test(r.url || ''));
 
 /* Instrucciones para la IA */
-function genPlanPrompt(subj, mt){
-  return `Eres ayudante de la asignatura «${subj.name}». Abajo está el material del curso, con marcas [archivo, p. N].\n\nDivide este material en clases de estudio de 45 a 60 minutos, en el orden en que conviene aprenderlas (de lo básico a lo avanzado). Cada clase enseña pocos conceptos relacionados. Máximo ${GEN_MAX_CLASSES} clases.\n\nResponde SOLO con JSON válido, sin texto antes ni después:\n{"clases":[{"titulo":"…","cubre":"qué conceptos y procedimientos enseña, en una o dos frases","fuente":"archivo y páginas"}]}\n\nUsa solo lo que está en el material; no agregues temas que no aparecen.\n\n---\nMATERIAL\n${mt}`;
+const genFocus = f => f ? `\n\nLo que entra en la evaluación (prioriza estos contenidos y deja fuera lo que no entra): ${f}` : '';
+function genPlanPrompt(subj, mt, focus){
+  return `Eres ayudante de la asignatura «${subj.name}». Abajo está el material del curso, con marcas [archivo, p. N].${genFocus(focus)}\n\nDivide este material en clases de estudio de 45 a 60 minutos, en el orden en que conviene aprenderlas (de lo básico a lo avanzado). Cada clase enseña pocos conceptos relacionados. Máximo ${GEN_MAX_CLASSES} clases.\n\nResponde SOLO con JSON válido, sin texto antes ni después:\n{"clases":[{"titulo":"…","cubre":"qué conceptos y procedimientos enseña, en una o dos frases","fuente":"archivo y páginas"}]}\n\nUsa solo lo que está en el material; no agregues temas que no aparecen.\n\n---\nMATERIAL\n${mt}`;
 }
 const GEN_FORMAT = `Formato (usa exactamente estos títulos, en este orden):
 # (título de la clase)
@@ -1525,8 +1656,8 @@ function genClassPrompt(subj, plan, i, mt){
   const c = plan[i], before = plan.slice(0, i).map(x => x.titulo).join('; '), after = plan.slice(i + 1).map(x => x.titulo).join('; ');
   return `Escribe la clase ${i + 1} de ${plan.length} de la asignatura «${subj.name}»: «${c.titulo}».\nDebe cubrir: ${c.cubre || c.titulo}.${c.fuente ? `\nFuente sugerida: ${c.fuente}.` : ''}${before ? `\nClases anteriores (no las repitas): ${before}.` : ''}${after ? `\nClases siguientes (no adelantes su contenido): ${after}.` : ''}\n\n${GEN_FORMAT}\n\n---\nMATERIAL\n${mt}`;
 }
-function genAllPrompt(subj, mt){
-  return `Eres ayudante de la asignatura «${subj.name}». Con el material de abajo (marcas [archivo, p. N]), arma clases de estudio de 45 a 60 minutos, en el orden en que conviene aprenderlas. Máximo ${GEN_MAX_CLASSES} clases. Escríbelas TODAS, una tras otra, cada una completa y con su propio bloque de ejercicios al final.\n\n${GEN_FORMAT}\n\nSi tu respuesta se corta, termina la clase que estabas escribiendo y espera a que te pidan «continúa».\n\n---\nMATERIAL\n${mt}`;
+function genAllPrompt(subj, mt, focus){
+  return `Eres ayudante de la asignatura «${subj.name}».${genFocus(focus)}\n\nCon el material de abajo (marcas [archivo, p. N]), arma clases de estudio de 45 a 60 minutos, en el orden en que conviene aprenderlas. Máximo ${GEN_MAX_CLASSES} clases. Escríbelas TODAS, una tras otra, cada una completa y con su propio bloque de ejercicios al final.\n\n${GEN_FORMAT}\n\nSi tu respuesta se corta, termina la clase que estabas escribiendo y espera a que te pidan «continúa».\n\n---\nMATERIAL\n${mt}`;
 }
 /* Respuesta de la IA → clases {title, content, items} */
 function genItem(x){
@@ -1574,9 +1705,9 @@ function addGenerated(sid, lessons, from, prevId){
 
 /* Panel «Crear clases con mi material» */
 let GEN = null;
-function openGenerator(sid){
+function openGenerator(sid, preset){
   sid = sid || (classSubj !== 'todas' ? classSubj : D.subjects[0] && D.subjects[0].id);
-  if (!GEN || GEN.sid !== sid || GEN.done) GEN = {sid, pick:{}, local:[], mats:[], errs:[], plan:null, busy:'', made:[]};
+  if (preset || !GEN || GEN.sid !== sid || GEN.done) GEN = {sid, pick:{}, local:[], mats:preset && preset.mats ? preset.mats.slice() : [], base:preset && preset.mats ? preset.mats.slice() : [], errs:[], plan:null, busy:'', made:[], focus:preset && preset.focus || '', evalId:preset && preset.evalId || ''};
   $('#drawer').classList.add('wide');
   openDrawer(h('div', {class:'drawer-head'}, h('div', {style:'flex:1'}, h('h3', null, '✦ Crear clases con mi material')), h('button', {class:'iconbtn', type:'button', 'aria-label':'Cerrar', onclick:closeDrawer}, '✕')),
     h('div', {class:'drawer-body', id:'genBody'}));
@@ -1619,7 +1750,7 @@ function drawGen(){
     } else {
       const ans = h('textarea', {class:'ai-need', rows:6, placeholder:'Pega aquí la respuesta completa de tu asistente (todas las clases).'});
       two.append(h('p', {class:'tiny muted', style:'margin:0 0 8px'}, 'Sin API key: copia la instrucción (incluye tu material), pégala en el asistente de IA que uses y pega aquí su respuesta. Si se corta, pídele «continúa» y pega todo junto.'),
-        h('div', {class:'ai-row'}, h('button', {class:'btn small', type:'button', onclick:async () => { const pr = genAllPrompt(subj, mt.txt); try { await navigator.clipboard.writeText(pr); toast('Instrucción copiada: pégala en tu asistente'); } catch { ans.value = pr; ans.select(); toast('Copia el texto del cuadro'); } }}, '⧉ Copiar instrucción')),
+        h('div', {class:'ai-row'}, h('button', {class:'btn small', type:'button', onclick:async () => { const pr = genAllPrompt(subj, mt.txt, G.focus); try { await navigator.clipboard.writeText(pr); toast('Instrucción copiada: pégala en tu asistente'); } catch { ans.value = pr; ans.select(); toast('Copia el texto del cuadro'); } }}, '⧉ Copiar instrucción')),
         ans, h('div', {class:'ai-row', style:'margin-top:8px'}, h('button', {class:'btn small hlbtn', type:'button', onclick:() => { const L = parseLessons(ans.value); if (!L.length){ toast('No encontré clases: cada una debe empezar con «# título»', 4000); return; } genFinish(L); }}, 'Crear clases con la respuesta')));
     }
     two.append(h('details', {class:'gen-ai', open:!key || null}, h('summary', {class:'tiny'}, key ? '⚙ IA conectada · cambiar' : '⚙ Conectar una IA para crearlas automáticamente'), aiConfigEl(() => drawGen())));
@@ -1634,8 +1765,8 @@ function drawGen(){
 }
 async function genRead(){
   const G = GEN, res = webcFileRes(G.sid).filter(r => G.pick[r.id]);
-  if (!res.length && !G.local.length){ toast('Elige o sube al menos un archivo'); return; }
-  G.mats = []; G.errs = []; G.plan = null;
+  if (!res.length && !G.local.length && !G.base.length){ toast('Elige o sube al menos un archivo'); return; }
+  G.mats = G.base.slice(); G.errs = []; G.plan = null;
   const jobs = [...res.map(r => ({name:r.title, get:async () => { const f = await fetchWebcFile(r.url); return {name:f.name || r.title, buf:f.buf, ctype:f.ctype}; }})),
     ...G.local.map(f => ({name:f.name, get:async () => ({name:f.name, buf:await f.arrayBuffer(), ctype:f.type})}))];
   for (let i = 0; i < jobs.length; i++){
@@ -1651,7 +1782,7 @@ async function aiRetry(prompt, opt){
 }
 async function genPlan(){
   const G = GEN; G.busy = 'Leyendo el material y proponiendo clases… (puede tardar un minuto)'; drawGen();
-  try { G.plan = parsePlan(await aiRetry(genPlanPrompt(S(G.sid), matText(G.mats).txt), {max:4000, json:true})); }
+  try { G.plan = parsePlan(await aiRetry(genPlanPrompt(S(G.sid), matText(G.mats).txt, G.focus), {max:4000, json:true})); }
   catch (e) { toast('No se pudo: ' + (e.message === 'NO_KEY' ? 'falta la API key' : e.message), 5000); }
   G.busy = ''; drawGen();
 }
@@ -1667,11 +1798,16 @@ async function genBuild(){
       G.made.push(...addGenerated(G.sid, [L], from, G.made.length ? G.made.at(-1).id : null));
     } catch (e) { toast(`Clase ${i + 1}: ${e.message === 'NO_KEY' ? 'falta la API key' : e.message}`, 5000); if (e.message === 'NO_KEY' || /no es válida/.test(e.message)) break; }
   }
-  G.busy = ''; G.done = true; drawGen(); render();
+  genToEval(G); G.busy = ''; G.done = true; drawGen(); render();
   if (G.made.length) toast(`${plural(G.made.length, 'clase creada', 'clases creadas')} en ${S(G.sid).short}`, 4000);
 }
+/* Clases creadas desde «Estudiar para»: si esa evaluación tiene lista de clases, se suman a la lista. */
+function genToEval(G){
+  const ev = G.evalId && D.events.find(e => e.id === G.evalId);
+  if (ev && ev.topics && ev.topics.length){ G.made.forEach(t => { if (!ev.topics.includes(t.id)) ev.topics.push(t.id); }); save(); }
+}
 function genFinish(L){
-  const G = GEN; G.made.push(...addGenerated(G.sid, L.slice(0, 20), G.mats.map(m => m.name))); G.done = true; drawGen(); render();
+  const G = GEN; G.made.push(...addGenerated(G.sid, L.slice(0, 20), G.mats.map(m => m.name))); genToEval(G); G.done = true; drawGen(); render();
   toast(`${plural(L.length, 'clase creada', 'clases creadas')} en ${S(G.sid).short}`, 4000);
 }
 
@@ -1799,7 +1935,7 @@ function openResourceForm(id){
     r ? () => { D.resources = D.resources.filter(x => x.id !== r.id); save(); } : null);
 }
 function vEditar(v){
-  v.append(h('div', {class:'sec-title'}, h('h2', null, 'Editar'), h('span', {class:'hand'}, 'tu Calculai, a tu medida')));
+  v.append(h('div', {class:'sec-title'}, h('h2', null, 'Editar'), h('span', {class:'hand'}, 'tu CalculAi, a tu medida')));
   v.append(h('label', {class:'field', style:'max-width:360px'}, h('span', null, '¿Cómo te llamo?'), h('input', {type:'text', value:D.owner || '', placeholder:'Tu nombre (opcional)', onchange:e => { D.owner = e.target.value.trim().slice(0, 30); save(); }})));
   const sec = (title, addLbl, onAdd, rows, emptyTxt) => v.append(h('section', {class:'edit-sec'},
     h('div', {style:'display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap'}, h('h3', {class:'display', style:'margin:0;font-size:1.15rem'}, title), h('button', {class:'btn small', type:'button', onclick:onAdd}, addLbl)),
@@ -1826,7 +1962,7 @@ function vEditar(v){
       h('button', {class:'btn ghost small', type:'button', onclick:() => file.click()}, '⇪ Abrir archivo'), file,
       h('button', {class:'btn ghost small', type:'button', onclick:shareToDevice, title:'Envía tu respaldo al celular u otro equipo'}, '📱 Pasar a otro dispositivo'),
       h('button', {class:'btn danger small', type:'button', onclick:() => { if (confirm('¿Borrar todos los datos de este navegador? Descarga antes un respaldo si los quieres.')){ D = blankData(); P = blankProg(); save(); tab = 'ahora'; render(); } }}, 'Borrar todo')),
-    h('p', {class:'tiny muted', style:'margin:10px 0 0'}, 'La plantilla lleva tus materias, fechas, clases escritas en Calculai y ejercicios. No lleva tu progreso, tus avisos ni lo que trajo tu WebC, ni tu API key. Las clases interactivas guardadas (paquete) tampoco van ahí.'),
+    h('p', {class:'tiny muted', style:'margin:10px 0 0'}, 'La plantilla lleva tus materias, fechas, clases escritas en CalculAi y ejercicios. No lleva tu progreso, tus avisos ni lo que trajo tu WebC, ni tu API key. Las clases interactivas guardadas (paquete) tampoco van ahí.'),
     h('div', {class:'ai-row', style:'margin-top:12px;align-items:center'},
       h('span', {class:'tiny'}, h('b', null, '▤ Clases guardadas en este dispositivo: '), String(lessonKeys.size)),
       h('button', {class:'btn ghost small', type:'button', onclick:pickLessonFile}, '⇪ Cargar paquete de clases'),
@@ -1846,7 +1982,7 @@ function importFile(f, fromWelcome){
       if (!fromWelcome && D.subjects.length && !confirm(j.progress ? 'Esto reemplaza tus datos y tu progreso actuales por los del archivo. ¿Continuar?' : 'Esto reemplaza tus materias, fechas, temas y ejercicios por los de la plantilla (tu progreso se mantiene en los temas que coincidan). ¿Continuar?')) return;
       D = nd; if (j.progress) P = normProg(j.progress);
       save(); tab = 'ahora'; render(); toast(j.progress ? 'Respaldo cargado' : 'Plantilla cargada');
-    } catch { toast('El archivo no es un respaldo ni una plantilla de Calculai'); }
+    } catch { toast('El archivo no es un respaldo ni una plantilla de CalculAi'); }
   };
   r.readAsText(f);
 }
@@ -1878,7 +2014,7 @@ function tick(){ if (!F || !F.running || F.end) return; F.left = Math.max(0, F.l
 function nextStep(){ if (F.idx < F.steps.length - 1){ F.idx++; F.left = F.steps[F.idx].min * 60; F.running = true; } else F.end = true; renderFocus(); }
 function toggleFocusLesson(){
   const box = $('#focusLesson'); if (!box || !F) return;
-  if (box.hidden){ const t = topic(F.t.id) || F.t; box.replaceChildren(h('div', {class:'focus-lesson-in card', style:scs(t.subj)}, h('div', {class:'ai-row', style:'justify-content:space-between'}, h('b', {class:'display'}, '▤ ' + t.title), h('button', {class:'btn ghost small', type:'button', onclick:toggleFocusLesson}, 'Ocultar clase')), hasLesson(t) ? renderContent(t.content) : null, hasSaved(t) ? savedFrame(t.url, t.title) : !hasLesson(t) ? h('p', {class:'tiny muted'}, 'Esta clase aún no tiene texto en Calculai.') : null, t.url && !hasSaved(t) ? viewer(t.url, t.title) : null)); box.hidden = false; box.scrollIntoView({behavior:'smooth', block:'start'}); }
+  if (box.hidden){ const t = topic(F.t.id) || F.t; box.replaceChildren(h('div', {class:'focus-lesson-in card', style:scs(t.subj)}, h('div', {class:'ai-row', style:'justify-content:space-between'}, h('b', {class:'display'}, '▤ ' + t.title), h('button', {class:'btn ghost small', type:'button', onclick:toggleFocusLesson}, 'Ocultar clase')), hasLesson(t) ? renderContent(t.content) : null, hasSaved(t) ? savedFrame(t.url, t.title) : !hasLesson(t) ? h('p', {class:'tiny muted'}, 'Esta clase aún no tiene texto en CalculAi.') : null, t.url && !hasSaved(t) ? viewer(t.url, t.title) : null)); box.hidden = false; box.scrollIntoView({behavior:'smooth', block:'start'}); }
   else { box.hidden = true; box.replaceChildren(); }
   renderFocus();
 }
@@ -1886,15 +2022,15 @@ function endFocus(){ const fl = $('#focusLesson'); if (fl){ fl.hidden = true; fl
 function renderFocus(){
   const el = $('#focus'); if (!F) return;
   const step = F.steps[F.idx], tot = step.min * 60, frac = F.left / tot, C = 2 * Math.PI * 100;
-  document.title = F.end ? 'Calculai' : `${pad(Math.floor(F.left / 60))}:${pad(F.left % 60)} · ${step.t}`;
+  document.title = F.end ? 'CalculAi' : `${pad(Math.floor(F.left / 60))}:${pad(F.left % 60)} · ${step.t}`;
   let host = el.querySelector('#focusMain');
   if (!host){ host = h('div', {id:'focusMain'}); el.replaceChildren(host, h('div', {id:'focusLesson', class:'focus-lesson', hidden:true})); }
   host.replaceChildren(h('div', {class:'focus-in', style:scs(F.t.subj)},
-    h('div', {class:'focus-top'}, h('div', null, subjChip(F.t.subj), ' ', h('b', {class:'display', style:'font-size:1.15rem'}, F.t.title)), h('button', {class:'iconbtn', type:'button', onclick:() => { document.title = 'Calculai'; endFocus(); }, 'aria-label':'Salir del modo enfoque'}, 'Salir ✕')),
+    h('div', {class:'focus-top'}, h('div', null, subjChip(F.t.subj), ' ', h('b', {class:'display', style:'font-size:1.15rem'}, F.t.title)), h('button', {class:'iconbtn', type:'button', onclick:() => { document.title = 'CalculAi'; endFocus(); }, 'aria-label':'Salir del modo enfoque'}, 'Salir ✕')),
     F.end ? h('div', {class:'card endpanel'},
       h('h2', {class:'display', style:'margin:0 0 4px'}, 'Sesión terminada'),
       h('p', {class:'muted', style:'margin:0 0 14px'}, `${plural(Math.round(F.elapsed / 60), 'minuto', 'minutos')} de trabajo. ¿Cómo quedó ${F.t.title}?`),
-      h('div', {class:'statusbar'}, STATUSES.filter(x => x.k !== 'pendiente').map(x => h('button', {class:'stbtn', type:'button', style:`--stc:var(--s-${x.k})`, 'aria-pressed':String(st(F.t.id) === x.k), onclick:() => { setStatus(F.t.id, x.k); toast(`${F.t.title}: ${x.l}`); document.title = 'Calculai'; endFocus(); }}, h('i', {class:'dot', style:`background:var(--s-${x.k})`}), x.l))),
+      h('div', {class:'statusbar'}, STATUSES.filter(x => x.k !== 'pendiente').map(x => h('button', {class:'stbtn', type:'button', style:`--stc:var(--s-${x.k})`, 'aria-pressed':String(st(F.t.id) === x.k), onclick:() => { setStatus(F.t.id, x.k); toast(`${F.t.title}: ${x.l}`); document.title = 'CalculAi'; endFocus(); }}, h('i', {class:'dot', style:`background:var(--s-${x.k})`}), x.l))),
       h('p', {class:'note'}, 'Si dudas entre dos estados, elige el más bajo: el repaso llega antes y no pierdes nada.'))
     : h('div', null,
       h('div', {class:'focus-main'},
@@ -1973,30 +2109,30 @@ function makeExample(){
 /* =========================================================
    CONECTAR CON WEBC / MOODLE
    El conector corre dentro de WebC con tu sesión ya iniciada (inicio con Microsoft incluido):
-   Calculai nunca ve ni guarda tu contraseña.
+   CalculAi nunca ve ni guarda tu contraseña.
    ========================================================= */
 const APP_BASE = location.origin + location.pathname.replace(/[^/]*$/, '');
 const BOOKMARKLET = `javascript:(function(){var s=document.createElement('script');s.src='${APP_BASE}conector.js?v='+Date.now();document.body.appendChild(s);})();`;
 let pendingWebc = null;
 function webcSteps(){
-  const bm = h('a', {class:'btn hlbtn', href:BOOKMARKLET, title:'Arrástrame a tu barra de marcadores', onclick:e => { e.preventDefault(); toast('Arrastra este botón a tu barra de marcadores'); }}, '⟳ Enviar a Calculai');
+  const bm = h('a', {class:'btn hlbtn', href:BOOKMARKLET, title:'Arrástrame a tu barra de marcadores', onclick:e => { e.preventDefault(); toast('Arrastra este botón a tu barra de marcadores'); }}, '⟳ Enviar a CalculAi');
   return h('div', null,
     h('ol', {class:'tiny', style:'padding-left:18px;margin:6px 0 12px;line-height:1.6'},
       h('li', null, h('b', null, 'Guarda el botón amarillo como marcador: '), 'arrástralo a la barra de marcadores de tu navegador (en Chrome: Ctrl+Mayús+B la muestra).'),
       h('li', null, 'Abre ', h('a', {href:'https://webc.uai.cl/my/courses.php', target:'_blank', rel:'noopener'}, 'WebC ↗'), ' e inicia sesión como siempre (con Microsoft).'),
-      h('li', null, 'Estando en WebC, toca el marcador «Enviar a Calculai», elige tus cursos y presiona «Enviar».'),
+      h('li', null, 'Estando en WebC, toca el marcador «Enviar a CalculAi», elige tus cursos y presiona «Enviar».'),
       h('li', null, 'Vuelves aquí, revisas lo que llegó y lo guardas.')),
     h('div', {style:'display:flex;gap:10px;flex-wrap:wrap;align-items:center'}, bm, h('span', {class:'tiny muted'}, '← arrástrame a la barra de marcadores')),
     h('details', {style:'margin-top:12px'}, h('summary', {class:'tiny', style:'cursor:pointer;font-weight:700'}, '¿No puedes arrastrarlo? (por ejemplo, en el celular)'),
       h('p', {class:'tiny muted'}, 'Crea un marcador cualquiera, edítalo y pega este texto como dirección. En el celular, después lo abres escribiendo su nombre en la barra de direcciones mientras estás en WebC. Es más cómodo hacerlo en el computador y luego pasar tus datos con «Pasar a otro dispositivo».'),
       h('div', {style:'display:flex;gap:8px;align-items:center'}, h('input', {type:'text', readonly:true, value:BOOKMARKLET, style:'flex:1;min-width:0;font-family:JetBrains Mono,monospace;font-size:.72rem;border:1px solid var(--line-2);border-radius:8px;padding:6px;background:var(--card-2);color:var(--ink)', onclick:e => e.target.select()}),
         h('button', {class:'btn ghost small', type:'button', onclick:async () => { try { await navigator.clipboard.writeText(BOOKMARKLET); toast('Copiado'); } catch { toast('Selecciona el texto y cópialo'); } }}, 'Copiar'))),
-    h('p', {class:'tiny muted', style:'margin-top:12px'}, '¿Por qué así? WebC usa inicio de sesión con Microsoft, así que una app externa no puede entrar por ti con usuario y contraseña. El marcador usa tu sesión ya abierta en WebC: lee lo mismo que tú ves y se lo pasa a Calculai, sin contraseñas y sin servidores intermedios. Funciona también con otros Moodle.'));
+    h('p', {class:'tiny muted', style:'margin-top:12px'}, '¿Por qué así? WebC usa inicio de sesión con Microsoft, así que una app externa no puede entrar por ti con usuario y contraseña. El marcador usa tu sesión ya abierta en WebC: lee lo mismo que tú ves y se lo pasa a CalculAi, sin contraseñas y sin servidores intermedios. Funciona también con otros Moodle.'));
 }
 function webcCard(){
   if (webcToken()) return h('section', {class:'edit-sec card', style:'border:2px solid var(--ink)'},
     h('h3', {class:'display', style:'margin:0 0 4px;font-size:1.15rem'}, '⟳ WebC conectado'),
-    h('p', {class:'tiny muted', style:'margin:0 0 8px'}, `Calculai revisa WebC solo cada vez que la abres${D.sync && D.sync.webc ? ' (última revisión: ' + agoMin(D.sync.webc.at) + ')' : ''}. La clave está solo en este navegador.`),
+    h('p', {class:'tiny muted', style:'margin:0 0 8px'}, `CalculAi revisa WebC solo cada vez que la abres${D.sync && D.sync.webc ? ' (última revisión: ' + agoMin(D.sync.webc.at) + ')' : ''}. La clave está solo en este navegador.`),
     h('div', {class:'ai-row'}, h('button', {class:'btn small', type:'button', onclick:() => { go('ahora'); requestWebcSync(true); }}, 'Revisar ahora'), h('button', {class:'btn ghost small', type:'button', onclick:webcDisconnect}, 'Desconectar')));
   return h('section', {class:'edit-sec card', style:'border:2px solid var(--ink)'},
     h('h3', {class:'display', style:'margin:0 0 4px;font-size:1.15rem'}, '⟳ Conectar con WebC'),
@@ -2011,18 +2147,18 @@ function openWebcHelp(){
 /* Plantilla para un compañero: sin progreso, sin nombre, sin avisos ni datos de revisión de WebC, sin plan. */
 function shareTemplate(){ return {...D, owner:'', news:[], sync:{}, plan:{}}; }
 async function copyInvite(){
-  const txt = `Te comparto Calculai, la app con la que estudio: ${APP_BASE}\nNo necesita cuenta y todo queda en tu navegador. Conecta tu WebC desde la app, crea clases con el material de tus cursos (en «Clases») y arma tu plan en «Calendario».`;
-  try { if (navigator.share) { await navigator.share({title:'Calculai', text:txt}); return; } } catch (e) { if (e && e.name === 'AbortError') return; }
+  const txt = `Te comparto CalculAi, la app con la que estudio: ${APP_BASE}\nNo necesita cuenta y todo queda en tu navegador. Conecta tu WebC desde la app, crea clases con el material de tus cursos (en «Clases») y arma tu plan en «Calendario».`;
+  try { if (navigator.share) { await navigator.share({title:'CalculAi', text:txt}); return; } } catch (e) { if (e && e.name === 'AbortError') return; }
   try { await navigator.clipboard.writeText(txt); toast('Invitación copiada: pégala en WhatsApp o donde quieras', 3500); } catch { toast(APP_BASE, 6000); }
 }
 async function shareToDevice(){
   const name = `calculai-respaldo-${iso(TODAY)}.json`, txt = JSON.stringify({app:'calculai', v:1, data:D, progress:P});
   try {
     const f = new File([txt], name, {type:'application/json'});
-    if (navigator.canShare && navigator.canShare({files:[f]})){ await navigator.share({files:[f], title:'Mi Calculai', text:'Ábrelo en Calculai → Abrir archivo'}); return; }
+    if (navigator.canShare && navigator.canShare({files:[f]})){ await navigator.share({files:[f], title:'Mi CalculAi', text:'Ábrelo en CalculAi → Abrir archivo'}); return; }
   } catch (e) { if (e && e.name === 'AbortError') return; }
   download(name, txt, 'application/json');
-  toast('Descargado: envíatelo (correo, WhatsApp, Drive) y ábrelo en Calculai del otro equipo');
+  toast('Descargado: envíatelo (correo, WhatsApp, Drive) y ábrelo en CalculAi del otro equipo');
 }
 /* Recepción desde el conector */
 window.addEventListener('message', ev => {
@@ -2094,7 +2230,7 @@ function vWebcReview(v){
   const W2 = pendingWebc;
   if (!W2){ tab = 'ahora'; render(); return; }
   v.append(h('div', {class:'sec-title'}, h('h2', null, 'Datos de WebC'), h('span', {class:'hand'}, 'revisa antes de guardar')));
-  v.append(h('p', {class:'muted', style:'margin:0'}, `Llegaron desde ${W2.origin.replace(/^https?:\/\//, '')} (${fmtD(parse(W2.at.slice(0, 10)))}). Nada se guarda hasta que presiones «Guardar en Calculai». Al repetir la conexión, lo ya importado se actualiza en vez de duplicarse.`));
+  v.append(h('p', {class:'muted', style:'margin:0'}, `Llegaron desde ${W2.origin.replace(/^https?:\/\//, '')} (${fmtD(parse(W2.at.slice(0, 10)))}). Nada se guarda hasta que presiones «Guardar en CalculAi». Al repetir la conexión, lo ya importado se actualiza en vez de duplicarse.`));
   W2.courses.forEach(row => {
     const c = row.c;
     const opts = [['new', '➕ Crear materia nueva'], ...D.subjects.map(s => [s.id, '↔ Unir con «' + s.name + '»'])];
@@ -2126,7 +2262,7 @@ function vWebcReview(v){
     v.append(card);
   });
   v.append(h('div', {style:'display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:18px;position:sticky;bottom:12px;background:var(--card);border:1px solid var(--line-2);border-radius:14px;padding:10px 12px;box-shadow:var(--shadow);z-index:5'},
-    h('button', {class:'btn hlbtn', type:'button', onclick:applyWebc}, '✓ Guardar en Calculai'),
+    h('button', {class:'btn hlbtn', type:'button', onclick:applyWebc}, '✓ Guardar en CalculAi'),
     h('button', {class:'btn ghost', type:'button', onclick:() => { pendingWebc = null; go(D.subjects.length ? 'ahora' : 'ahora'); }}, 'Cancelar')));
 }
 function applyWebc(){
@@ -2173,8 +2309,8 @@ const webcBase = () => { const o = D.sync && D.sync.webc && D.sync.webc.origin; 
 /* ---------- WebC directo desde la app (sin instalar nada) ----------
    Usa el servicio de la app móvil de Moodle. La persona abre en WebC el inicio de sesión de la app
    (admin/tool/mobile/launch.php, el mismo que usa la app de WebC con Microsoft), copia el enlace
-   «Haga clic aquí si la app no se abre…» y lo pega en Calculai. Ese enlace trae una clave del servicio
-   móvil; con ella Calculai lee WebC directo: webservice/rest/server.php y webservice/pluginfile.php
+   «Haga clic aquí si la app no se abre…» y lo pega en CalculAi. Ese enlace trae una clave del servicio
+   móvil; con ella CalculAi lee WebC directo: webservice/rest/server.php y webservice/pluginfile.php
    aceptan pedidos desde otras páginas (Access-Control-Allow-Origin: *, verificado en el código de Moodle).
    La clave queda solo en este navegador (localStorage), nunca en D, respaldos ni plantillas. */
 const WEBC = 'https://webc.uai.cl';
@@ -2190,7 +2326,7 @@ function parseWebcKey(txt){
 function wsForm(obj, prefix, out){ for (const [k, v] of Object.entries(obj)){ const key = prefix ? `${prefix}[${k}]` : k; if (v != null && typeof v === 'object') wsForm(v, key, out); else if (v != null) out.append(key, String(v)); } return out; }
 async function ws(fn, args = {}, token = webcToken()){
   const body = wsForm(args, '', new URLSearchParams({wstoken:token, wsfunction:fn, moodlewsrestformat:'json'}));
-  let r; try { r = await fetch(WEBC + '/webservice/rest/server.php', {method:'POST', body}); } catch { throw new Error('WebC no permitió la conexión directa desde Calculai'); }
+  let r; try { r = await fetch(WEBC + '/webservice/rest/server.php', {method:'POST', body}); } catch { throw new Error('WebC no permitió la conexión directa desde CalculAi'); }
   if (!r.ok) throw new Error('WebC respondió ' + r.status);
   const j = await r.json().catch(() => null);
   if (j && j.exception){ if (/invalidtoken|accessexception|invalidlogin/i.test(j.errorcode || '')) throw new Error('TOKEN'); throw new Error(j.message || j.errorcode || 'error de WebC'); }
@@ -2209,7 +2345,7 @@ function htmlText(html){
   return (d.body ? d.body.textContent : '').replace(/[ \t ]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 async function poolRun(items, n, fn){ let next = 0; const run = async () => { while (next < items.length){ const k = next++; await fn(items[k], k); } }; await Promise.all(Array.from({length:Math.min(n, items.length)}, run)); }
-/* Lo mismo que hace el script (mismo formato de datos), pero desde Calculai con la clave. */
+/* Lo mismo que hace el script (mismo formato de datos), pero desde CalculAi con la clave. */
 async function restSync(rq){
   const started = Date.now(), timeUp = () => Date.now() - started > 100000;
   const want = (rq.courses || []).map(Number), codes = (rq.codes || []).map(c => String(c).toUpperCase().replace(/[^A-Z0-9]/g, ''));
@@ -2447,7 +2583,7 @@ async function msFinish(q){
 }
 function msExplain(m){
   m = String(m || '');
-  if (/AADSTS(90094|65001|90008)|admin|administrador/i.test(m)) return 'Microsoft pide la aprobación de un administrador de tu institución para dar este permiso. Sin esa aprobación no se puede leer el correo desde Calculai. (' + m.slice(0, 140) + ')';
+  if (/AADSTS(90094|65001|90008)|admin|administrador/i.test(m)) return 'Microsoft pide la aprobación de un administrador de tu institución para dar este permiso. Sin esa aprobación no se puede leer el correo desde CalculAi. (' + m.slice(0, 140) + ')';
   if (/AADSTS50011|redirect/i.test(m)) return 'La dirección de retorno no coincide. En el registro de la app agrega exactamente: ' + MS_REDIRECT;
   if (/AADSTS700016|application.*not found/i.test(m)) return 'Microsoft no encuentra ese Id. de aplicación. Revisa que lo copiaste completo.';
   return m.slice(0, 220);
@@ -2614,21 +2750,22 @@ function openAutoSyncHelp(){
 }
 function autoSyncSteps(){
   return h('div', null,
-    h('p', {class:'tiny muted', style:'margin:0 0 10px'}, 'Una página web no puede entrar a WebC por su cuenta: WebC usa inicio de sesión con Microsoft. Por eso Calculai usa un pequeño script de revisión que corre en tu navegador, con tu sesión de WebC ya abierta. Así, cada vez que abres Calculai, se revisa WebC solo. Sin contraseñas y sin servidores intermedios.'),
+    h('p', {class:'note', style:'margin:0 0 10px'}, 'Lo más simple es ', h('button', {class:'linkbtn', type:'button', onclick:openWebcConnect}, '«Conectar con WebC» sin instalar nada'), '. El script es otra opción para quien ya usa Tampermonkey. Si al abrir el enlace del script ves código en vez del botón «Instalar», Tampermonkey no está instalado o no tiene permiso en este navegador.'),
+    h('p', {class:'tiny muted', style:'margin:0 0 10px'}, 'El script corre en tu navegador con tu sesión de WebC ya abierta y revisa WebC cada vez que abres CalculAi. Sin contraseñas y sin servidores intermedios.'),
     SYNC.agent ? h('p', {class:'note', style:'margin:0 0 10px'}, `✓ El script de revisión está activo en este navegador (versión ${SYNC.agent}).`) : null,
     h('ol', {class:'tiny', style:'padding-left:18px;margin:6px 0 12px;line-height:1.7'},
       h('li', null, h('b', null, 'Instala la extensión gratuita Tampermonkey '), '(Chrome, Edge, Firefox o Safari en computador) desde la tienda de extensiones de tu navegador.'),
       h('li', null, h('b', null, 'Solo en Chrome o Edge: '), 'clic derecho en el ícono de Tampermonkey → «Administrar extensión» → activa «Permitir scripts de usuario» (Chrome 138 o más nuevo). En versiones anteriores, activa el «Modo de desarrollador» en chrome://extensions.'),
       h('li', null, h('b', null, 'Instala el script: '), h('a', {class:'btn small hlbtn', href:USERSCRIPT_URL, target:'_blank', rel:'noopener', style:'margin:4px 0'}, '⟳ Instalar revisión automática'), ' y en la ventana de Tampermonkey presiona «Instalar».'),
       h('li', null, h('b', null, 'Inicia sesión en WebC '), 'una vez en este navegador (', h('a', {href:webcBase() + '/my/', target:'_blank', rel:'noopener'}, 'abrir WebC ↗'), ').'),
-      h('li', null, h('b', null, 'Recarga Calculai. '), 'Arriba, en «Ahora», verás «Revisando WebC…» y luego el resumen. La primera vez Tampermonkey puede pedirte permiso para conectarse a webc.uai.cl: elige «Permitir siempre».')),
+      h('li', null, h('b', null, 'Recarga CalculAi. '), 'Arriba, en «Ahora», verás «Revisando WebC…» y luego el resumen. La primera vez Tampermonkey puede pedirte permiso para conectarse a webc.uai.cl: elige «Permitir siempre».')),
     h('div', {class:'card', style:'background:var(--card-2)'},
       h('b', null, 'Qué se actualiza solo'), h('ul', {class:'tiny', style:'margin:6px 0 0;padding-left:18px'},
         h('li', null, 'Fechas del calendario de WebC de tus cursos (entregas, controles): se agregan o se corrigen si cambiaron. Si borras una, no vuelve a aparecer.'),
         h('li', null, 'Avisos de los profesores y recursos nuevos (guías, archivos).'),
         h('li', null, 'Fechas escritas dentro de los avisos: quedan en «Para revisar», porque leerlas del texto puede fallar.'),
         h('li', null, 'Además, en «Crear clases con mi material» el script trae los archivos de tus cursos para armar clases.'))),
-    h('p', {class:'tiny muted', style:'margin-top:10px'}, 'En el celular depende del navegador: Firefox para Android acepta Tampermonkey; en iPhone no puedo confirmar que funcione igual. Ahí sigue sirviendo el marcador «Enviar a Calculai» o «Pasar a otro dispositivo».'));
+    h('p', {class:'tiny muted', style:'margin-top:10px'}, 'En el celular depende del navegador: Firefox para Android acepta Tampermonkey; en iPhone no puedo confirmar que funcione igual. Ahí sigue sirviendo el marcador «Enviar a CalculAi» o «Pasar a otro dispositivo».'));
 }
 function outlookCard(){
   const c = msCfg(), sd = D.sync || {};
@@ -2639,7 +2776,7 @@ function outlookCard(){
   const field = (lbl, inp, help) => h('label', {class:'field', style:'margin:0 0 8px'}, h('span', null, lbl), inp, help ? h('small', {class:'tiny muted'}, help) : null);
   return h('section', {class:'edit-sec card'},
     h('h3', {class:'display', style:'margin:0 0 4px;font-size:1.15rem'}, '✉ Conectar Outlook (opcional)'),
-    h('p', {class:'tiny muted', style:'margin:0 0 8px'}, 'Al abrir Calculai, lee los correos nuevos de tu bandeja que vengan de WebC o mencionen tus cursos, los guarda en Biblioteca → Avisos y pasa las fechas que encuentre a «Para revisar». Solo pide permiso de lectura (Mail.Read). El acceso queda guardado en este navegador y los correos se leen directo desde Microsoft.'),
+    h('p', {class:'tiny muted', style:'margin:0 0 8px'}, 'Al abrir CalculAi, lee los correos nuevos de tu bandeja que vengan de WebC o mencionen tus cursos, los guarda en Biblioteca → Avisos y pasa las fechas que encuentre a «Para revisar». Solo pide permiso de lectura (Mail.Read). El acceso queda guardado en este navegador y los correos se leen directo desde Microsoft.'),
     msConnected() ? h('p', {class:'note', style:'margin:0 0 8px'}, `✓ Conectado · última revisión ${agoMin(sd.outlook && sd.outlook.at)}`) : null,
     SYNC.outlookMsg && (SYNC.outlook === 'error' || SYNC.outlook === 'reconnect') ? h('p', {class:'card warn tiny', style:'margin:0 0 8px'}, SYNC.outlookMsg) : null,
     field('Id. de aplicación (cliente)', idIn), field('Inquilino', tenIn, '«common» sirve para cuentas de la universidad y personales.'), field('Palabras para reconocer correos', kwIn, 'Separadas por coma. También se reconocen los correos que nombran el código o el nombre de tus materias.'),
@@ -2650,11 +2787,11 @@ function outlookCard(){
     h('details', {style:'margin-top:12px'}, h('summary', {class:'tiny', style:'cursor:pointer;font-weight:700'}, 'Cómo obtener el Id. de aplicación (una sola vez, ~5 min)'),
       h('ol', {class:'tiny', style:'padding-left:18px;line-height:1.7'},
         h('li', null, 'Entra a ', h('a', {href:'https://entra.microsoft.com/', target:'_blank', rel:'noopener'}, 'entra.microsoft.com ↗'), ' con tu cuenta y ve a «Aplicaciones» → «Registros de aplicaciones» → «Nuevo registro».'),
-        h('li', null, 'Nombre: Calculai. Tipos de cuenta: «Cuentas de cualquier directorio organizativo y cuentas personales de Microsoft».'),
+        h('li', null, 'Nombre: CalculAi. Tipos de cuenta: «Cuentas de cualquier directorio organizativo y cuentas personales de Microsoft».'),
         h('li', null, 'URI de redirección: plataforma «Aplicación de página única (SPA)» y esta dirección exacta: ', h('code', {class:'mono'}, MS_REDIRECT), ' ', h('button', {class:'linkbtn', type:'button', onclick:async () => { try { await navigator.clipboard.writeText(MS_REDIRECT); toast('Copiada'); } catch { toast('Selecciónala y cópiala'); } }}, 'copiar')),
         h('li', null, 'Presiona «Registrar», copia el «Id. de aplicación (cliente)» y pégalo arriba.'),
         h('li', null, 'Presiona «Guardar y conectar con Microsoft» y acepta el permiso de lectura de correo.')),
-      h('p', {class:'tiny muted'}, 'No puedo confirmar si la UAI permite que estudiantes registren apps o den este permiso por su cuenta: si Microsoft responde que se necesita aprobación de un administrador, esta conexión no se puede usar sin TI. La revisión automática de WebC funciona igual sin Outlook. Las conexiones de Microsoft desde páginas como esta duran hasta 24 horas; después, Calculai te pedirá volver a conectar con un clic.')));
+      h('p', {class:'tiny muted'}, 'No puedo confirmar si la UAI permite que estudiantes registren apps o den este permiso por su cuenta: si Microsoft responde que se necesita aprobación de un administrador, esta conexión no se puede usar sin TI. La revisión automática de WebC funciona igual sin Outlook. Las conexiones de Microsoft desde páginas como esta duran hasta 24 horas; después, CalculAi te pedirá volver a conectar con un clic.')));
 }
 
 /* =========================================================
@@ -2693,10 +2830,10 @@ document.addEventListener('DOMContentLoaded', () => {
   let deferred = null;
   window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferred = e; $('#installBtn').hidden = false; });
   $('#installBtn').addEventListener('click', async () => { if (!deferred) return; deferred.prompt(); await deferred.userChoice.catch(() => {}); deferred = null; $('#installBtn').hidden = true; });
-  /* Calculai no funciona dentro de otra página: así una página ajena no puede usarla de fondo para
+  /* CalculAi no funciona dentro de otra página: así una página ajena no puede usarla de fondo para
      engañarte con clics, ni puede volver a aparecer la app dentro del recuadro de una clase. */
   let framed = true; try { framed = window.top !== window.self; } catch {}
-  if (framed){ $('#view').replaceChildren(h('div', {class:'card', style:'margin:24px'}, h('p', null, 'Calculai se abre en su propia pestaña.'), h('a', {class:'btn', href:'https://sanisidro566.github.io/calculai/', target:'_blank', rel:'noopener'}, 'Abrir Calculai ↗'))); return; }
+  if (framed){ $('#view').replaceChildren(h('div', {class:'card', style:'margin:24px'}, h('p', null, 'CalculAi se abre en su propia pestaña.'), h('a', {class:'btn', href:'https://sanisidro566.github.io/calculai/', target:'_blank', rel:'noopener'}, 'Abrir CalculAi ↗'))); return; }
   syncBadge(); render(); startAutoSync(); loadLessonKeys();
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => {});
 });

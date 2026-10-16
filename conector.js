@@ -1,8 +1,8 @@
 /* global M */ /* M es la configuración de Moodle que ya existe en cada página de WebC */
-/* Calculai · conector para WebC / Moodle.
-   Se ejecuta DENTRO de WebC (con tu sesión ya iniciada) desde el marcador «Enviar a Calculai».
+/* CalculAi · conector para WebC / Moodle.
+   Se ejecuta DENTRO de WebC (con tu sesión ya iniciada) desde el marcador «Enviar a CalculAi».
    Lee tus cursos, fechas del calendario, recursos y avisos usando las mismas páginas que ves,
-   y se los entrega a Calculai. No pide ni guarda contraseñas y no envía nada a terceros. */
+   y se los entrega a CalculAi. No pide ni guarda contraseñas y no envía nada a terceros. */
 (function(){
   'use strict';
   if (window.__calculaiConector) { window.__calculaiConector.show(); return; }
@@ -21,14 +21,14 @@
     '#clc-panel .clc-bar{height:8px;background:#e7e3d6;border-radius:99px;overflow:hidden;margin:10px 0}#clc-panel .clc-bar i{display:block;height:100%;width:0;background:#ffcf2e;transition:width .3s}' +
     '#clc-panel .clc-log{font-size:13px;color:#46557a;max-height:120px;overflow:auto}#clc-panel .clc-ok{color:#1f8a4c;font-weight:700}#clc-panel .clc-err{color:#c9382f;font-weight:700}';
   var style = document.createElement('style'); style.textContent = css; document.head.appendChild(style);
-  var panel = document.createElement('div'); panel.id = 'clc-panel'; panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-label', 'Calculai');
+  var panel = document.createElement('div'); panel.id = 'clc-panel'; panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-label', 'CalculAi');
   document.body.appendChild(panel);
   function el(tag, attrs, kids){ var e = document.createElement(tag); if (attrs) for (var k in attrs){ if (k === 'text') e.textContent = attrs[k]; else if (k.slice(0,2) === 'on') e.addEventListener(k.slice(2), attrs[k]); else e.setAttribute(k, attrs[k]); } (kids || []).forEach(function(c){ if (c) e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); }); return e; }
   function render(kids){ panel.innerHTML = ''; panel.appendChild(el('button', {class:'clc-x', 'aria-label':'Cerrar', onclick:function(){ panel.remove(); style.remove(); delete window.__calculaiConector; }, text:'×'})); kids.forEach(function(k){ if (k) panel.appendChild(k); }); }
   window.__calculaiConector = {show:function(){ if (!document.body.contains(panel)) document.body.appendChild(panel); }};
 
   if (!MOODLE || !M.cfg.sesskey) {
-    render([el('h2', {text:'Calculai'}), el('p', {text:'Abre este marcador dentro de WebC (o tu Moodle) con tu sesión iniciada, por ejemplo en la página «Mis cursos».'})]);
+    render([el('h2', {text:'CalculAi'}), el('p', {text:'Abre este marcador dentro de WebC (o tu Moodle) con tu sesión iniciada, por ejemplo en la página «Mis cursos».'})]);
     return;
   }
 
@@ -55,10 +55,10 @@
   function step(pct, msg){ if (bar) bar.style.width = pct + '%'; if (log){ var p = el('div', {text:msg}); log.appendChild(p); log.scrollTop = log.scrollHeight; } }
 
   /* ---------- paso 1: elegir cursos ---------- */
-  render([el('h2', {text:'Calculai · conectar con WebC'}), el('p', {text:'Buscando tus cursos…'})]);
+  render([el('h2', {text:'CalculAi · conectar con WebC'}), el('p', {text:'Buscando tus cursos…'})]);
   ajax('core_course_get_enrolled_courses_by_timeline_classification', {classification:'inprogress', limit:0, offset:0, sort:'fullname'})
     .then(function(d){ chooseCourses(d.courses || []); })
-    .catch(function(e){ render([el('h2', {text:'Calculai'}), el('p', {class:'clc-err', text:'No pude leer tus cursos (' + e.message + '). Revisa que tu sesión de WebC esté iniciada y vuelve a intentarlo.'})]); });
+    .catch(function(e){ render([el('h2', {text:'CalculAi'}), el('p', {class:'clc-err', text:'No pude leer tus cursos (' + e.message + '). Revisa que tu sesión de WebC esté iniciada y vuelve a intentarlo.'})]); });
 
   function chooseCourses(courses){
     var boxes = [];
@@ -66,10 +66,10 @@
       var m = courseMeta(c); var cb = el('input', {type:'checkbox'}); cb.checked = m.academic; cb._course = c; boxes.push(cb);
       return el('label', null, [cb, el('span', null, [el('b', {text:m.name}), el('br'), el('small', {text:[m.code, m.section].filter(Boolean).join(' · ') || c.shortname})])]);
     }));
-    render([el('h2', {text:'Calculai · conectar con WebC'}),
-      el('p', {text:'Elige los cursos que quieres llevar a Calculai. Leeré sus fechas del calendario, los recursos publicados y los avisos recientes.'}),
+    render([el('h2', {text:'CalculAi · conectar con WebC'}),
+      el('p', {text:'Elige los cursos que quieres llevar a CalculAi. Leeré sus fechas del calendario, los recursos publicados y los avisos recientes.'}),
       list,
-      el('small', {text:'Nada sale de tu navegador: los datos se entregan directamente a tu Calculai en ' + APP_ORIGIN + '.'}),
+      el('small', {text:'Nada sale de tu navegador: los datos se entregan directamente a tu CalculAi en ' + APP_ORIGIN + '.'}),
       el('div', {class:'clc-row'}, [el('button', {class:'clc-btn', text:'Leer cursos seleccionados', onclick:function(){ var sel = boxes.filter(function(b){ return b.checked; }).map(function(b){ return b._course; }); if (!sel.length) return; collect(sel); }})])]);
   }
 
@@ -122,25 +122,25 @@
     seq.then(function(){ step(100, 'Listo.'); deliver(payload); });
   }
 
-  /* ---------- paso 3: entregar a Calculai ---------- */
+  /* ---------- paso 3: entregar a CalculAi ---------- */
   function deliver(payload){
     window.__calculaiLast = payload;
     var nEv = 0, nRes = 0, nNews = 0; payload.courses.forEach(function(c){ nEv += c.events.length; nRes += c.resources.length; nNews += c.news.length; });
     var status = el('p', {text:''});
-    function download(){ var blob = new Blob([JSON.stringify(payload)], {type:'application/json'}); var a = el('a', {href:URL.createObjectURL(blob), download:'calculai-webc-' + new Date().toISOString().slice(0, 10) + '.json'}); document.body.appendChild(a); a.click(); a.remove(); status.textContent = 'Archivo descargado. En Calculai: Editar → Abrir archivo.'; status.className = 'clc-ok'; }
+    function download(){ var blob = new Blob([JSON.stringify(payload)], {type:'application/json'}); var a = el('a', {href:URL.createObjectURL(blob), download:'calculai-webc-' + new Date().toISOString().slice(0, 10) + '.json'}); document.body.appendChild(a); a.click(); a.remove(); status.textContent = 'Archivo descargado. En CalculAi: Editar → Abrir archivo.'; status.className = 'clc-ok'; }
     function send(){
       var w = window.open(APP + '?from=webc', 'calculai');
       if (!w){ status.textContent = 'Tu navegador bloqueó la ventana. Usa «Descargar archivo».'; status.className = 'clc-err'; return; }
-      status.textContent = 'Abriendo Calculai…'; status.className = '';
+      status.textContent = 'Abriendo CalculAi…'; status.className = '';
       var sent = false, tries = 0;
-      function onMsg(ev){ if (ev.origin !== APP_ORIGIN || !ev.data) return; if (ev.data.type === 'calculai-ready' && !sent){ sent = true; w.postMessage(payload, APP_ORIGIN); } if (ev.data.type === 'calculai-received'){ status.textContent = '✓ Listo: revisa y confirma en Calculai.'; status.className = 'clc-ok'; window.removeEventListener('message', onMsg); } }
+      function onMsg(ev){ if (ev.origin !== APP_ORIGIN || !ev.data) return; if (ev.data.type === 'calculai-ready' && !sent){ sent = true; w.postMessage(payload, APP_ORIGIN); } if (ev.data.type === 'calculai-received'){ status.textContent = '✓ Listo: revisa y confirma en CalculAi.'; status.className = 'clc-ok'; window.removeEventListener('message', onMsg); } }
       window.addEventListener('message', onMsg);
-      var iv = setInterval(function(){ tries++; if (sent || tries > 40){ clearInterval(iv); if (!sent){ status.textContent = 'Calculai no respondió. Usa «Descargar archivo».'; status.className = 'clc-err'; } return; } try { w.postMessage({type:'calculai-ping'}, APP_ORIGIN); } catch (e) {} }, 500);
+      var iv = setInterval(function(){ tries++; if (sent || tries > 40){ clearInterval(iv); if (!sent){ status.textContent = 'CalculAi no respondió. Usa «Descargar archivo».'; status.className = 'clc-err'; } return; } try { w.postMessage({type:'calculai-ping'}, APP_ORIGIN); } catch (e) {} }, 500);
     }
     render([el('h2', {text:'Todo listo'}),
       el('p', {text:payload.courses.length + ' cursos · ' + nEv + ' fechas de calendario · ' + nRes + ' recursos · ' + nNews + ' avisos.'}),
-      el('p', null, [el('small', {text:'En Calculai vas a revisar todo antes de guardarlo. Las fechas que aparezcan dentro de los avisos llegan como sugerencias para que las confirmes tú.'})]),
-      el('div', {class:'clc-row'}, [el('button', {class:'clc-btn', text:'Enviar a Calculai', onclick:send}), el('button', {class:'clc-btn ghost', text:'Descargar archivo', onclick:download})]),
+      el('p', null, [el('small', {text:'En CalculAi vas a revisar todo antes de guardarlo. Las fechas que aparezcan dentro de los avisos llegan como sugerencias para que las confirmes tú.'})]),
+      el('div', {class:'clc-row'}, [el('button', {class:'clc-btn', text:'Enviar a CalculAi', onclick:send}), el('button', {class:'clc-btn ghost', text:'Descargar archivo', onclick:download})]),
       status]);
   }
 })();

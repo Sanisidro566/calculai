@@ -1,4 +1,4 @@
-# Instrucciones para editar Calculai
+# Instrucciones para editar CalculAi
 
 App de estudio estática (GitHub Pages), en español, sin servidor. Lee `ARQUITECTURA.md` antes de cambiar algo.
 

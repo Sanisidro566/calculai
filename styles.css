@@ -650,3 +650,12 @@ button.res{text-align:left;cursor:pointer;width:100%}
 .connect-steps{margin:6px 0 12px;padding-left:20px;display:flex;flex-direction:column;gap:12px}
 .connect-steps li > .btn{margin:2px 0 4px}
 .connect-steps input{margin-top:6px}
+
+/* Estudiar para una evaluación */
+.eval-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:4px 0 12px}
+.eval-chip{cursor:pointer;min-height:34px;border-color:var(--sc)}
+.exam-link{cursor:pointer}
+.exam-link:hover,.exam-link:focus-visible{outline:2px solid var(--sc);outline-offset:2px}
+.eval-gaps{margin-top:10px;padding:10px;border:1px dashed var(--line);border-radius:10px;display:flex;flex-direction:column;gap:8px;align-items:flex-start}
+.eval-gaps ul{margin:4px 0 0;padding-left:18px}
+.eval-page .gen-list .chk .dot{display:inline-block;width:8px;height:8px;border-radius:50%}

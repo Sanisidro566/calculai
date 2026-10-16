@@ -1,4 +1,4 @@
-# Arquitectura de Calculai
+# Arquitectura de CalculAi
 
 Mapa para saber **dónde está cada cosa** y **qué no se puede romper**. Si vas a cambiar algo, lee esto primero.
 
@@ -10,7 +10,7 @@ Mapa para saber **dónde está cada cosa** y **qué no se puede romper**. Si vas
 | `app.js` | Toda la lógica, en secciones (ver índice al inicio del archivo) | Casi siempre |
 | `styles.css` | Diseño claro/oscuro. Variables en `:root` (tres bloques: claro, oscuro automático, oscuro forzado) | Cambios visuales |
 | `calculai-sync.user.js` | Script de Tampermonkey: lee WebC con la sesión del navegador y le entrega los datos a la app | Cambios en la lectura de WebC. **Subir `@version` y `SCRIPT_V` en app.js juntos** |
-| `conector.js` | Marcador «Enviar a Calculai» (se ejecuta dentro de WebC) | Cambios en la lectura manual |
+| `conector.js` | Marcador «Enviar a CalculAi» (se ejecuta dentro de WebC) | Cambios en la lectura manual |
 | `oauth.html` | Retorno del inicio de sesión de Microsoft (Outlook) | Casi nunca |
 | `sw.js` | Modo sin internet. **Subir `CACHE` en cada publicación** que cambie app.js o styles.css | Cada publicación |
 | `tests/smoke.py` | Prueba automática en Chromium con datos inventados | Al agregar funciones importantes |
@@ -38,11 +38,15 @@ Todo vive en el navegador de cada persona.
 
 **Paquete de clases.** Es un archivo `.json` `{app:'calculai', lessons:[{key, code, title, html}], data?}`. Se carga en *Editar → Respaldo → Cargar paquete de clases* o con *Abrir archivo*. `importPack` guarda las clases en IndexedDB. Si el paquete trae `data`, ofrece cargarla, y lo hace directo cuando solo hay datos de ejemplo.
 
-**Clase aislada.** El iframe tiene `sandbox` **sin** `allow-same-origin`: la clase no puede leer los datos ni la API key de Calculai. `lessonShim` reemplaza su `localStorage` por una copia que avisa cada cambio por `postMessage`. Calculai lo guarda en `calculai-lstate` y, si la clave termina en `-status`, actualiza el estado del tema.
+**Clase aislada.** El iframe tiene `sandbox` **sin** `allow-same-origin`: la clase no puede leer los datos ni la API key de CalculAi. `lessonShim` reemplaza su `localStorage` por una copia que avisa cada cambio por `postMessage`. CalculAi lo guarda en `calculai-lstate` y, si la clave termina en `-status`, actualiza el estado del tema.
 
 **Plan de estudio (Calendario).** `buildPlan` reparte las clases pendientes de cada materia (en el orden de `D.topics`) en los días que quedan hasta su evaluación, según `D.plan`. Cada cupo va a la materia más apurada (clases que faltan ÷ días que quedan), así las materias se alternan; la víspera de cada evaluación es de repaso. Se recalcula siempre desde hoy: lo Practicado o Dominado sale. Lo que no alcanza se pasa a la evaluación siguiente o se avisa. Se ve en el mes, en Agenda, en el detalle del día y en «Ahora» (`todayPlanCard`).
 
 **Crear clases con mi material.** `openGenerator` → elige archivos de WebC (los trae el script con `calculai-file-request`, solo `/mod/resource`, `/mod/page` y `/pluginfile.php`) o subidos → `readMaterial` saca el texto (PDF con pdf.js, `.pptx`/`.docx` con un lector de zip propio) → la IA propone clases (`genPlan`) y escribe cada una (`genBuild`), o se copia la instrucción y se pega la respuesta → `parseLessons` separa clases y ejercicios → `addGenerated` crea temas (con `content` y `gen`) y ejercicios. IA: Google (con plan gratis), Anthropic u OpenAI, con la key de cada persona (`callAI`, `aiConfigEl`).
+
+**WebC directo, sin instalar nada (camino principal).** `openWebcConnect` abre en WebC `admin/tool/mobile/launch.php?service=moodle_mobile_app&urlscheme=calculai&confirmed=1` (el inicio de sesión de la app de WebC). Esa página muestra un enlace `calculai://token=…`; la persona copia su dirección y la pega. `parseWebcKey` saca la clave del servicio móvil, que queda en `localStorage` (`calculai-webc-token`, nunca en D). `ws()` llama a `webservice/rest/server.php` y `webcFileByToken` a `webservice/pluginfile.php`. Ambos responden con `Access-Control-Allow-Origin: *`, verificado en el código fuente de Moodle. `restSync` arma el mismo formato que el script y llama a `applyAutoWebc`. Si la clave vence, la barra pide «Conectar de nuevo». Requiere que WebC tenga activo el servicio de la app móvil. El script y el marcador siguen como alternativas.
+
+**Estudiar para una evaluación.** `vEvalStudy` (Clases → «🎯 Estudiar para», o la tarjeta de la evaluación en «Ahora» o en el Calendario). Guarda en el evento `e.study = {text, docs, gaps, note}` y la lista `e.topics`; `examFor` toma esa lista en cuenta, así que el plan, la preparación, «La próxima hora» y Práctica (`pracFilter = 'ev:<id>'`) usan solo esas clases. `aiOrPaste` consulta la IA con la key o, sin key, copia la instrucción y recibe la respuesta pegada. «Crear clases para lo que falta» abre el generador con la pauta como material y el foco de la evaluación (`openGenerator(sid, {mats, focus, evalId})`).
 
 **Primera conexión (compañeros).** Sin materias y con el script, «Conectar con WebC» lista los cursos (`firstConnect` → `firstPicker`) y los trae a la revisión normal (`vWebcReview`).
 
@@ -57,8 +61,8 @@ Todo vive en el navegador de cada persona.
 **Seguridad.** El repositorio y la app son públicos y se comparten: un archivo de otra persona (plantilla, paquete, respaldo) es dato no confiable.
 - `h()` descarta `href`/`src` que no sean web, correo, `blob:` o relativos (`urlOk`); `openExt` abre solo `http(s)`; el visor solo incrusta `https`.
 - `normData`/`normProg` exigen arreglos de objetos; `planCfg` corrige valores raros.
-- CSP en `index.html`: conexiones solo a los proveedores de IA y Microsoft; sin imágenes externas ni `object`. Las clases (srcdoc) heredan esta política: por eso permite scripts en línea y cdnjs.
-- Calculai no corre dentro de otra página (arranque). El script solo habla con WebC (`@connect webc.uai.cl`) y solo trae archivos de cursos.
+- CSP en `index.html`: conexiones solo a WebC, a los proveedores de IA y a Microsoft; sin imágenes externas ni `object`. Las clases (srcdoc) heredan esta política: por eso permite scripts en línea y cdnjs.
+- CalculAi no corre dentro de otra página (arranque). El script solo habla con WebC (`@connect webc.uai.cl`) y solo trae archivos de cursos.
 - La API key vive en el `localStorage` de `sanisidro566.github.io`, compartido con cualquier otra página publicada en esa misma cuenta de GitHub Pages: no publiques ahí páginas de terceros.
 
 **Ojo con Tampermonkey:** el script corre en un entorno aislado donde `window` no es la ventana real. No compares `ev.source === window` en el script; filtra por `ev.origin`. La prueba `tests/smoke.py` imita ese entorno.

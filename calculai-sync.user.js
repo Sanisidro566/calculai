@@ -2,7 +2,7 @@
 // @name         Calculai · revisión automática de WebC
 // @namespace    https://sanisidro566.github.io/calculai/
 // @version      1.2.0
-// @description  Cada vez que abres Calculai, revisa WebC (con tu sesión ya iniciada) y trae fechas, avisos y recursos nuevos. No pide ni guarda contraseñas.
+// @description  Cada vez que abres CalculAi, revisa WebC (con tu sesión ya iniciada) y trae fechas, avisos y recursos nuevos. No pide ni guarda contraseñas.
 // @match        https://sanisidro566.github.io/calculai/*
 // @connect      webc.uai.cl
 // @grant        GM_xmlhttpRequest
@@ -13,16 +13,16 @@
 // @downloadURL  https://sanisidro566.github.io/calculai/calculai-sync.user.js
 // ==/UserScript==
 /* Cómo funciona
-   - Calculai (la página) le pide a este script una revisión al abrirse.
-   - El script lee WebC con TU sesión del navegador, igual que el marcador «Enviar a Calculai»
-     (mismas páginas y mismas funciones de Moodle), y le entrega los datos a Calculai.
-   - Solo lee a fondo los cursos que ya son materias en Calculai (por id de WebC o por código).
-     Los demás cursos solo se listan, para que Calculai te pregunte si quieres agregarlos.
-   - Los avisos que Calculai ya tiene no se vuelven a abrir. Por eso, desde la segunda vez, es rápido.
-   - Si no has iniciado sesión en WebC, se lo avisa a Calculai para que te muestre «Inicia sesión en WebC».
-   - Nada se envía a otros servidores. Solo responde a mensajes de la propia página de Calculai.
+   - CalculAi (la página) le pide a este script una revisión al abrirse.
+   - El script lee WebC con TU sesión del navegador, igual que el marcador «Enviar a CalculAi»
+     (mismas páginas y mismas funciones de Moodle), y le entrega los datos a CalculAi.
+   - Solo lee a fondo los cursos que ya son materias en CalculAi (por id de WebC o por código).
+     Los demás cursos solo se listan, para que CalculAi te pregunte si quieres agregarlos.
+   - Los avisos que CalculAi ya tiene no se vuelven a abrir. Por eso, desde la segunda vez, es rápido.
+   - Si no has iniciado sesión en WebC, se lo avisa a CalculAi para que te muestre «Inicia sesión en WebC».
+   - Nada se envía a otros servidores. Solo responde a mensajes de la propia página de CalculAi.
    Versión 1.1.0: cursos y avisos en paralelo, avisos ya conocidos se saltan, máximo 100 s por revisión.
-  Versión 1.1.1: funciona dentro del entorno aislado de Tampermonkey (antes ignoraba el pedido de Calculai)
+  Versión 1.1.1: funciona dentro del entorno aislado de Tampermonkey (antes ignoraba el pedido de CalculAi)
     y siempre responde, aunque WebC no conteste.
   Versión 1.2.0: cuando eliges archivos en «Crear clases con mi material», trae ese archivo de WebC
     (solo archivos y páginas de un curso: /mod/resource, /mod/page o /pluginfile.php; nada más). */
@@ -51,7 +51,7 @@
 
   var busy = false;
   window.addEventListener('message', function(ev){
-    /* Solo mensajes de la propia página de Calculai. No se compara ev.source con window: en Tampermonkey
+    /* Solo mensajes de la propia página de CalculAi. No se compara ev.source con window: en Tampermonkey
        `window` es un envoltorio de la ventana real y esa comparación descartaba todos los pedidos. */
     if (ev.origin !== ORIGIN || !ev.data || typeof ev.data !== 'object') return;
     if (ev.data.type === 'calculai-agent-ping') post({type:'calculai-agent-hello', v:VERSION, ok:true});
@@ -63,7 +63,7 @@
     }
     if (ev.data.type === 'calculai-sync-request' && !busy){
       busy = true;
-      /* Plazo duro: pase lo que pase con WebC, Calculai recibe una respuesta. */
+      /* Plazo duro: pase lo que pase con WebC, CalculAi recibe una respuesta. */
       var hard = new Promise(function(_, reject){ setTimeout(function(){ reject(new Error('WebC tardó demasiado en responder')); }, TOTAL_LIMIT + 25000); });
       Promise.race([run(ev.data), hard]).catch(function(e){ post({type:'calculai-sync-status', state:'error', msg:String(e && e.message || e)}); }).then(function(){ busy = false; });
     }
@@ -142,7 +142,7 @@
       post({type:'calculai-sync-status', state:'checking', msg:'leyendo tus cursos'});
       return ajax('core_course_get_enrolled_courses_by_timeline_classification', {classification:'inprogress', limit:0, offset:0, sort:'fullname'}).then(function(d){
         var all = (d.courses || []).filter(function(c){ return courseMeta(c).academic; });
-        /* Solo se leen a fondo los cursos que ya son materias en Calculai (por id de WebC o por código). */
+        /* Solo se leen a fondo los cursos que ya son materias en CalculAi (por id de WebC o por código). */
         function linked(c){ var mm = courseMeta(c); return want.indexOf(c.id) >= 0 || (!!mm.code && codes.indexOf(mm.code.toUpperCase()) >= 0); }
         var sel = all.filter(linked);
         var unlinked = all.filter(function(c){ return !linked(c); }).map(function(c){ var mm = courseMeta(c); return {id:c.id, name:mm.name, code:mm.code}; });
@@ -206,7 +206,7 @@
             var links = [], s2 = {};
             fdoc.querySelectorAll('a[href*="discuss.php?d="]').forEach(function(a){ var u = new URL(a.getAttribute('href'), newsUrl).href.split('#')[0]; var t = a.textContent.replace(/\s+/g, ' ').trim(); if (!s2[u] && t && !/^\d+$/.test(t)){ s2[u] = 1; links.push({url:u, title:t, id:(u.match(/d=(\d+)/) || [])[1] || u}); } });
             links = links.slice(0, MAX_NEWS);
-            /* Los avisos que Calculai ya tiene no se vuelven a abrir: se mandan solo con su id. */
+            /* Los avisos que CalculAi ya tiene no se vuelven a abrir: se mandan solo con su id. */
             var have = (known[c.id] || []).map(String);
             links.forEach(function(L){ if (have.indexOf(String(L.id)) >= 0) out.news.push({id:L.id, title:L.title, url:L.url, known:true}); });
             var toRead = links.filter(function(L){ return have.indexOf(String(L.id)) < 0; });

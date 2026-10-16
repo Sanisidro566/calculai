@@ -1,4 +1,4 @@
-"""Antislop de Calculai: revisión estática rápida. Correr ANTES de publicar, junto con smoke.py.
+"""Antislop de CalculAi: revisión estática rápida. Correr ANTES de publicar, junto con smoke.py.
 
     python3 tests/antislop.py        (desde la carpeta del repositorio; no necesita instalar nada)
 
