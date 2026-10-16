@@ -659,3 +659,6 @@ button.res{text-align:left;cursor:pointer;width:100%}
 .eval-gaps{margin-top:10px;padding:10px;border:1px dashed var(--line);border-radius:10px;display:flex;flex-direction:column;gap:8px;align-items:flex-start}
 .eval-gaps ul{margin:4px 0 0;padding-left:18px}
 .eval-page .gen-list .chk .dot{display:inline-block;width:8px;height:8px;border-radius:50%}
+.eval-auto{margin-top:10px;padding:10px 12px;border:1px solid var(--ok);border-radius:10px;display:flex;flex-direction:column;gap:6px;align-items:flex-start}
+.eval-auto ul{margin:0;padding-left:18px}
+details.gen-step > summary{cursor:pointer}

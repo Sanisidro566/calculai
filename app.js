@@ -781,6 +781,48 @@ async function evalUpload(e, files){
     catch (err) { toast(`${f.name}: ${err.message}`, 5000); }
   }
   evalBusy = ''; save(); render();
+  if (st0.docs.length && !st0.auto) evalAutoClasses(e);
+}
+/* Con la pauta (o lo que escribiste), la IA divide lo que se evalúa en ~3 clases nuevas solo para esta
+   evaluación, con los ejercicios de la pauta como ejemplos y ejercicios para Práctica. Esas clases pasan a
+   ser las que entran (e.topics). Si se vuelven a crear, las anteriores sin avance se reemplazan. */
+const evalFocus = e => { const st0 = studyOf(e); return `Esto es para preparar «${S(e.subj).name} · ${e.name}». El material de abajo es la pauta, el temario o una prueba anterior de esa evaluación: las clases deben enseñar exactamente lo que ahí se evalúa (conceptos, procedimientos y tipos de ejercicio), usar sus ejercicios como ejemplos resueltos y no agregar temas que no aparecen.${st0.text ? ' Además, el estudiante dice: ' + st0.text : ''}`; };
+async function evalAutoClasses(e){
+  const st0 = studyOf(e), sb = S(e.subj);
+  if (!st0.docs.length && !st0.text){ toast('Sube la pauta o escribe qué entra'); return; }
+  const mats = st0.docs.length ? st0.docs.map(x => ({name:x.name, pages:[x.text], chars:x.text.length})) : [{name:'Lo que entra', pages:[st0.text], chars:st0.text.length}];
+  const mt = matText(mats).txt, focus = evalFocus(e), from = mats.map(m => m.name), say = m => { evalBusy = m; render(); };
+  const finish = made => {
+    if (!made.length){ evalBusy = ''; render(); return; }
+    const old = (st0.auto && st0.auto.ids) || [];
+    old.filter(id => !made.some(t => t.id === id) && st(id) === 'pendiente').forEach(id => { D.topics = D.topics.filter(t => t.id !== id); D.items = D.items.filter(i => i.topic !== id); });
+    made.forEach(t => { t.gen.eval = e.id; });
+    e.topics = made.map(t => t.id); st0.auto = {at:iso(TODAY), ids:e.topics.slice()}; st0.gaps = []; st0.note = '';
+    evalBusy = ''; save(); render();
+    toast(`${plural(made.length, 'clase nueva', 'clases nuevas')} para ${e.name}, con sus ejercicios`, 5000);
+  };
+  if (!getAIKey()){
+    aiOrPaste(genAllPrompt(sb, mt, focus, 3), {}, txt => {
+      const L = parseLessons(txt); if (!L.length){ toast('No encontré clases en la respuesta: cada una debe empezar con «# título»', 5000); return; }
+      const made = []; L.slice(0, 6).forEach(x => made.push(...addGenerated(e.subj, [x], from, made.length ? made.at(-1).id : null))); finish(made);
+    });
+    return;
+  }
+  const made = [];
+  try {
+    say('Leyendo la pauta y dividiéndola en clases…');
+    const plan = parsePlan(await aiRetry(genPlanPrompt(sb, mt, focus, 3), {max:3000, json:true}, say));
+    for (let i = 0; i < plan.length; i++){
+      say(`Escribiendo la clase ${i + 1} de ${plan.length}: ${plan[i].titulo}… (cada una tarda alrededor de un minuto)`);
+      try {
+        const L = parseLessons(await aiRetry(genClassPrompt(sb, plan, i, mt, focus), {max:16000}, say))[0];
+        if (!L) throw new Error('la respuesta no tenía el formato esperado');
+        L.title = plan[i].titulo; L.content = L.content.replace(/^# .+/, '# ' + L.title);
+        made.push(...addGenerated(e.subj, [L], from, made.length ? made.at(-1).id : null));
+      } catch (err) { toast(`Clase ${i + 1}: ${err.message}`, 5000); if (/no es válida|NO_KEY/.test(err.message)) break; }
+    }
+  } catch (err) { toast('No se pudo: ' + (err.message === 'NO_KEY' ? 'falta la API key' : err.message), 5000); }
+  finish(made);
 }
 function vEvalStudy(v, e){
   const sb = S(e.subj), all = lessonOrder(e.subj), st0 = studyOf(e), chosen = !!(e.topics && e.topics.length), list = evalList(e), d = diffDays(TODAY, parse(e.date));
@@ -799,9 +841,14 @@ function vEvalStudy(v, e){
     h('section', {class:'card gen-step'}, h('h4', null, '1. ¿Qué entra?'),
       h('textarea', {class:'ai-need', rows:3, placeholder:'Ej.: entra hasta integrales impropias, sin series; habrá un ejercicio de áreas. Escribe lo que dijo el profesor o el temario.', 'aria-label':'Qué entra', onchange:ev => { st0.text = ev.target.value.slice(0, 4000); save(); }}, st0.text || ''),
       h('div', {class:'ai-row', style:'margin-top:8px'}, h('button', {class:'btn ghost small', type:'button', onclick:() => fileIn.click()}, '⇪ Subir pauta, temario o prueba anterior'), h('span', {class:'tiny muted'}, 'PDF, PowerPoint, Word o texto'), fileIn),
-      st0.docs.length ? h('ul', {class:'tiny gen-read'}, st0.docs.map(x => h('li', null, `📄 ${x.name} · ${plural(x.pages || 1, 'página', 'páginas')} `, h('button', {class:'linkbtn', type:'button', onclick:() => { st0.docs = st0.docs.filter(y => y !== x); save(); render(); }}, 'quitar')))) : null),
-    /* 2. Clases que entran */
-    h('section', {class:'card gen-step'}, h('h4', null, '2. Clases que entran'),
+      st0.docs.length ? h('ul', {class:'tiny gen-read'}, st0.docs.map(x => h('li', null, `📄 ${x.name} · ${plural(x.pages || 1, 'página', 'páginas')} `, h('button', {class:'linkbtn', type:'button', onclick:() => { st0.docs = st0.docs.filter(y => y !== x); save(); render(); }}, 'quitar')))) : null,
+      st0.auto && st0.auto.ids.some(topic)
+        ? h('div', {class:'eval-auto'}, h('b', null, `✓ Clases creadas para ${e.name}:`), h('ul', {class:'tiny'}, st0.auto.ids.map(topic).filter(Boolean).map(t => h('li', null, `${t.code} · ${t.title}`))),
+            h('button', {class:'btn ghost small', type:'button', disabled:evalBusy || null, onclick:() => { if (confirm('¿Crear las clases de nuevo? Las anteriores que sigan en «Pendiente» se reemplazan.')) evalAutoClasses(e); }}, '↻ Crearlas de nuevo'))
+        : h('div', {class:'ai-row', style:'margin-top:10px'}, h('button', {class:'btn hlbtn', type:'button', disabled:evalBusy || null, onclick:() => evalAutoClasses(e)}, `✦ Crear las clases para ${e.name}`),
+            h('span', {class:'tiny muted'}, 'Al subir la pauta se crean solas: divide lo que se evalúa en unas 3 clases con ejercicios.'))),
+    /* 2. Clases que entran (ajuste opcional) */
+    h('details', {class:'card gen-step', open:(!st0.auto && chosen) || null}, h('summary', null, h('b', null, '2. Ajustar qué clases entran (opcional)')),
       h('p', {class:'tiny muted', style:'margin:0 0 8px'}, chosen ? `Elegiste ${list.length} de ${all.length} clases. El plan, la práctica y la preparación usan solo estas.` : 'Si no eliges ninguna, cuentan todas las clases de la materia.'),
       all.length ? h('div', {class:'gen-list'}, all.map(t => h('label', {class:'chk'}, h('input', {type:'checkbox', checked:(chosen && e.topics.includes(t.id)) || null, onchange:ev => { const cur = new Set(e.topics || []); ev.target.checked ? cur.add(t.id) : cur.delete(t.id); e.topics = all.filter(x => cur.has(x.id)).map(x => x.id); save(); render(); }}),
         h('span', null, h('i', {class:'dot', style:`background:var(--s-${st(t.id)})`}), ' ', t.code ? h('b', null, t.code + ' ') : null, t.title)))) : h('p', {class:'tiny muted'}, 'Esta materia todavía no tiene clases.'),
@@ -1614,8 +1661,9 @@ const webcFileRes = sid => D.resources.filter(r => r.subj === sid && /^https:\/\
 
 /* Instrucciones para la IA */
 const genFocus = f => f ? `\n\nLo que entra en la evaluación (prioriza estos contenidos y deja fuera lo que no entra): ${f}` : '';
-function genPlanPrompt(subj, mt, focus){
-  return `Eres ayudante de la asignatura «${subj.name}». Abajo está el material del curso, con marcas [archivo, p. N].${genFocus(focus)}\n\nDivide este material en clases de estudio de 45 a 60 minutos, en el orden en que conviene aprenderlas (de lo básico a lo avanzado). Cada clase enseña pocos conceptos relacionados. Máximo ${GEN_MAX_CLASSES} clases.\n\nResponde SOLO con JSON válido, sin texto antes ni después:\n{"clases":[{"titulo":"…","cubre":"qué conceptos y procedimientos enseña, en una o dos frases","fuente":"archivo y páginas"}]}\n\nUsa solo lo que está en el material; no agregues temas que no aparecen.\n\n---\nMATERIAL\n${mt}`;
+const genCount = n => n ? `Arma ${n} clases (menos solo si el contenido es muy corto).` : `Máximo ${GEN_MAX_CLASSES} clases.`;
+function genPlanPrompt(subj, mt, focus, n){
+  return `Eres ayudante de la asignatura «${subj.name}». Abajo está el material del curso, con marcas [archivo, p. N].${genFocus(focus)}\n\nDivide este material en clases de estudio de 45 a 60 minutos, en el orden en que conviene aprenderlas (de lo básico a lo avanzado). Cada clase enseña pocos conceptos relacionados. ${genCount(n)}\n\nResponde SOLO con JSON válido, sin texto antes ni después:\n{"clases":[{"titulo":"…","cubre":"qué conceptos y procedimientos enseña, en una o dos frases","fuente":"archivo y páginas"}]}\n\nUsa solo lo que está en el material; no agregues temas que no aparecen.\n\n---\nMATERIAL\n${mt}`;
 }
 const GEN_FORMAT = `Formato (usa exactamente estos títulos, en este orden):
 # (título de la clase)
@@ -1652,12 +1700,12 @@ Reglas:
  {"tipo":"numerica","pregunta":"…","respuesta":12.5,"tolerancia":0.01,"unidad":"m/s","explicacion":"…"}]
 \`\`\`
   Entre 4 y 8 ejercicios con respuesta correcta y verificable. «correcta» es la posición de la opción correcta contando desde 0. «tolerancia» es relativa (0.01 = 1 %).`;
-function genClassPrompt(subj, plan, i, mt){
+function genClassPrompt(subj, plan, i, mt, focus){
   const c = plan[i], before = plan.slice(0, i).map(x => x.titulo).join('; '), after = plan.slice(i + 1).map(x => x.titulo).join('; ');
-  return `Escribe la clase ${i + 1} de ${plan.length} de la asignatura «${subj.name}»: «${c.titulo}».\nDebe cubrir: ${c.cubre || c.titulo}.${c.fuente ? `\nFuente sugerida: ${c.fuente}.` : ''}${before ? `\nClases anteriores (no las repitas): ${before}.` : ''}${after ? `\nClases siguientes (no adelantes su contenido): ${after}.` : ''}\n\n${GEN_FORMAT}\n\n---\nMATERIAL\n${mt}`;
+  return `Escribe la clase ${i + 1} de ${plan.length} de la asignatura «${subj.name}»: «${c.titulo}».\nDebe cubrir: ${c.cubre || c.titulo}.${genFocus(focus)}${c.fuente ? `\nFuente sugerida: ${c.fuente}.` : ''}${before ? `\nClases anteriores (no las repitas): ${before}.` : ''}${after ? `\nClases siguientes (no adelantes su contenido): ${after}.` : ''}\n\n${GEN_FORMAT}\n\n---\nMATERIAL\n${mt}`;
 }
-function genAllPrompt(subj, mt, focus){
-  return `Eres ayudante de la asignatura «${subj.name}».${genFocus(focus)}\n\nCon el material de abajo (marcas [archivo, p. N]), arma clases de estudio de 45 a 60 minutos, en el orden en que conviene aprenderlas. Máximo ${GEN_MAX_CLASSES} clases. Escríbelas TODAS, una tras otra, cada una completa y con su propio bloque de ejercicios al final.\n\n${GEN_FORMAT}\n\nSi tu respuesta se corta, termina la clase que estabas escribiendo y espera a que te pidan «continúa».\n\n---\nMATERIAL\n${mt}`;
+function genAllPrompt(subj, mt, focus, n){
+  return `Eres ayudante de la asignatura «${subj.name}».${genFocus(focus)}\n\nCon el material de abajo (marcas [archivo, p. N]), arma clases de estudio de 45 a 60 minutos, en el orden en que conviene aprenderlas. ${genCount(n)} Escríbelas TODAS, una tras otra, cada una completa y con su propio bloque de ejercicios al final.\n\n${GEN_FORMAT}\n\nSi tu respuesta se corta, termina la clase que estabas escribiendo y espera a que te pidan «continúa».\n\n---\nMATERIAL\n${mt}`;
 }
 /* Respuesta de la IA → clases {title, content, items} */
 function genItem(x){
@@ -1776,9 +1824,9 @@ async function genRead(){
   }
   G.busy = ''; drawGen();
 }
-async function aiRetry(prompt, opt){
+async function aiRetry(prompt, opt, say = m => { if (GEN){ GEN.busy = m; drawGen(); } }){
   try { return await callAI(prompt, opt); }
-  catch (e) { if (!/límite/.test(e.message)) throw e; GEN.busy = 'Llegué al límite de uso por minuto de la IA. Espero 40 segundos y sigo…'; drawGen(); await new Promise(r => setTimeout(r, 40000)); return callAI(prompt, opt); }
+  catch (e) { if (!/límite/.test(e.message)) throw e; say('Llegué al límite de uso por minuto de la IA. Espero 40 segundos y sigo…'); await new Promise(r => setTimeout(r, 40000)); return callAI(prompt, opt); }
 }
 async function genPlan(){
   const G = GEN; G.busy = 'Leyendo el material y proponiendo clases… (puede tardar un minuto)'; drawGen();
