@@ -273,6 +273,56 @@ async def main():
             await pg.set_viewport_size({'width': 390, 'height': 844}); await pg.wait_for_timeout(300)
             check(not await pg.evaluate('document.documentElement.scrollWidth > innerWidth'), 'sin scroll horizontal en el celular')
             check(not errs, f'sin errores de JavaScript {errs[:3]}')
+
+            print('6. Compañero nuevo: WebC directo con la clave de la app (Moodle simulado)')
+            TOKEN = 'a' * 32
+            ctx2 = await b.new_context(viewport={'width': 1280, 'height': 900})
+            await ctx2.route(re.compile(r'https://(fonts\.(googleapis|gstatic)\.com|cdnjs\.cloudflare\.com)/.*'), lambda r: r.abort())
+            wscalls = []
+            async def moodle(route):
+                rq = route.request; H = {'access-control-allow-origin': '*', 'content-type': 'application/json'}
+                if 'pluginfile.php' in rq.url:
+                    ok = 'token=' + TOKEN in rq.url
+                    return await route.fulfill(status=200 if ok else 403, headers={'access-control-allow-origin': '*', 'content-type': 'application/pdf'}, body=PDF if ok else b'')
+                form = dict(x.split('=', 1) for x in (rq.post_data or '').split('&') if '=' in x)
+                fn = form.get('wsfunction'); wscalls.append(fn)
+                if form.get('wstoken') != TOKEN: return await route.fulfill(status=200, headers=H, body=json.dumps({'exception': 'moodle_exception', 'errorcode': 'invalidtoken', 'message': 'Token no válido'}))
+                d = {'core_webservice_get_site_info': {'sitename': 'WebC', 'userid': 7, 'siteurl': 'https://webc.uai.cl'},
+                     'core_course_get_enrolled_courses_by_timeline_classification': {'courses': [{'id': 10001, 'fullname': 'FÍSICA I Sec.3', 'shortname': 'X-FIS101-3'}, {'id': 10002, 'fullname': 'ÁLGEBRA LINEAL Sec.8', 'shortname': 'X-MAT113-8'}, {'id': 555, 'fullname': 'Biblioteca', 'shortname': 'BIB'}]},
+                     'core_calendar_get_action_events_by_timesort': {'events': [{'id': 7001, 'name': 'Vencimiento de Entrega lab', 'timesort': NOW + 5 * 86400, 'modulename': 'assign', 'course': {'id': 10001}, 'url': 'https://webc.uai.cl/mod/assign/view.php?id=9'}]},
+                     'core_calendar_get_calendar_upcoming_view': {'events': []},
+                     'core_course_get_contents': [{'name': 'Unidad 1', 'modules': [{'modname': 'resource', 'name': 'Guía 10', 'url': 'https://webc.uai.cl/mod/resource/view.php?id=2', 'contents': [{'filename': 'Guía 10.pdf', 'fileurl': 'https://webc.uai.cl/webservice/pluginfile.php/9/mod_resource/content/1/Gu%C3%ADa%2010.pdf?forcedownload=1'}]}, {'modname': 'forum', 'name': 'Avisos', 'url': 'https://webc.uai.cl/mod/forum/view.php?id=1'}]}],
+                     'mod_forum_get_forums_by_courses': [{'id': 31, 'course': 10001, 'type': 'news'}],
+                     'mod_forum_get_forum_discussions': {'discussions': [{'discussion': 500, 'name': 'Cambio de fecha', 'message': '<p>El informe se entrega el <b>viernes 30 de octubre</b> a las 22:00.</p>', 'created': NOW - 3600, 'userfullname': 'Profe'}]}}.get(fn)
+                if fn == 'core_course_get_contents' and form.get('courseid') != '10001': d = []
+                if d is None: return await route.fulfill(status=200, headers=H, body=json.dumps({'exception': 'x', 'errorcode': 'nofunction', 'message': fn}))
+                await route.fulfill(status=200, headers=H, body=json.dumps(d))
+            await ctx2.route(re.compile(r'https://webc\.uai\.cl/webservice/.*'), moodle)
+            p2 = await ctx2.new_page(); errs2 = []; p2.on('pageerror', lambda e: errs2.append(str(e)))
+            await p2.goto(APP); await p2.wait_for_timeout(500)
+            await p2.click('.choice:has-text("Conectar con WebC")'); await p2.wait_for_timeout(300)
+            check('launch.php?service=moodle_mobile_app' in (await p2.get_attribute('#drawer a:has-text("Abrir WebC")', 'href')), 'el botón abre el inicio de sesión de la app de WebC')
+            await p2.fill('#drawer input', 'calculai://token=' + base64.b64encode(b'x' * 32 + b':::' + b'b' * 32).decode()); await p2.dispatch_event('#drawer input', 'change'); await p2.wait_for_timeout(600)
+            check('no sirve' in await p2.inner_text('#drawer'), 'una clave equivocada se rechaza con un mensaje claro')
+            await p2.fill('#drawer input', 'calculai://token=' + base64.b64encode(b'x' * 32 + b':::' + TOKEN.encode() + b':::priv').decode()); await p2.dispatch_event('#drawer input', 'change'); await p2.wait_for_timeout(2500)
+            cursos = await p2.locator('#drawer .chk').all_inner_texts()
+            check(len(cursos) == 2 and await p2.evaluate("localStorage.getItem('calculai-webc-token')") == TOKEN, f'con la clave lista los cursos sin script ni marcador {cursos}')
+            await p2.click('#drawer button:has-text("Traer estos cursos")'); await p2.wait_for_timeout(2500)
+            await p2.click('button:has-text("Guardar en Calculai")'); await p2.wait_for_timeout(500)
+            r2 = await p2.evaluate("({s:D.subjects.map(x=>x.name), e:D.events.length, r:D.resources.filter(x=>x.file).length, n:(D.news||[]).length, inD:JSON.stringify(D).includes('" + TOKEN + "')})")
+            check(len(r2['s']) == 2 and r2['e'] >= 1 and r2['r'] >= 1 and r2['n'] >= 1, f'trae materias, fechas, archivos y avisos {r2}')
+            check(not r2['inD'], 'la clave no queda dentro de los datos ni de los respaldos')
+            await p2.evaluate("go('ahora')"); await p2.wait_for_timeout(300)
+            await p2.evaluate("requestWebcSync(true)"); await p2.wait_for_timeout(2500)
+            check('WebC revisado' in await p2.inner_text('#syncStrip'), 'al abrir, revisa WebC solo con la clave')
+            await p2.evaluate("classSubj = D.subjects.find(s=>s.code==='FIS101').id; go('clases')"); await p2.wait_for_timeout(200)
+            await p2.click('.sec-title button:has-text("Crear clases con mi material")'); await p2.wait_for_timeout(300)
+            await p2.check('#genBody .gen-list label:has-text("Guía 10") input')
+            await p2.click('#genBody button:has-text("Leer material")'); await p2.wait_for_timeout(3500)
+            check(await p2.locator('.gen-read li:has-text("Guía 10.pdf")').count() == 1, 'el archivo de WebC se lee para crear clases, sin script')
+            await p2.evaluate("localStorage.setItem('calculai-webc-token', 'c' * 1 + 'c'.repeat(31)); SYNC.webc = 'idle'; go('ahora'); requestWebcSync(true)"); await p2.wait_for_timeout(1500)
+            check('venció' in await p2.inner_text('#syncStrip'), 'si la clave deja de servir, pide conectar de nuevo')
+            check(not errs2, f'sin errores de JavaScript (compañero nuevo) {errs2[:3]}')
             await b.close()
     finally:
         srv.terminate()

@@ -239,13 +239,13 @@ function vWelcome(v){
   const file = h('input', {type:'file', accept:'.json,application/json', style:'display:none', onchange:e => importFile(e.target.files[0], true)});
   v.append(h('div', {class:'welcome'},
     h('p', {class:'note', style:'margin:0 0 6px'}, 'calculai · tu plan de estudio'),
-    SYNC.agent && SYNC.first ? syncStrip() : null,
+    webcOn() && SYNC.first ? syncStrip() : null,
     h('h1', null, 'Estudia con un plan, ', h('span', {class:'hl'}, 'no con culpa.')),
     h('p', {class:'muted', style:'font-size:1.05rem'}, 'Agrega tus materias, evaluaciones y temas. Calculai te dice qué estudiar en la próxima hora y por qué, te hace practicar con honestidad y te avisa lo que viene.'),
     h('div', {class:'choices'},
       h('button', {class:'choice', type:'button', onclick:startEmpty}, h('span', {class:'ico'}, '✎'), h('b', null, 'Empezar desde cero'), h('span', null, 'Creo mi primera materia y voy agregando lo demás.')),
       h('button', {class:'choice', type:'button', onclick:() => { D = makeExample(); P = blankProg(); save(); go('ahora'); toast('Cargué un ejemplo: edítalo o bórralo cuando quieras'); }}, h('span', {class:'ico'}, '◎'), h('b', null, 'Ver un ejemplo'), h('span', null, 'Tres materias de muestra para conocer la app. Después lo borras.')),
-      h('button', {class:'choice', type:'button', onclick:() => SYNC.agent ? firstConnect() : openWebcHelp()}, h('span', {class:'ico'}, '⟳'), h('b', null, 'Conectar con WebC'), h('span', null, SYNC.agent ? 'El script de revisión está activo: elige tus cursos y traigo fechas, avisos y archivos.' : 'Trae tus cursos, fechas, recursos y avisos desde WebC (o tu Moodle).')),
+      h('button', {class:'choice', type:'button', onclick:() => webcOn() ? firstConnect() : openWebcConnect()}, h('span', {class:'ico'}, '⟳'), h('b', null, 'Conectar con WebC'), h('span', null, webcOn() ? 'WebC ya está conectado: elige tus cursos y traigo fechas, avisos y archivos.' : 'Sin instalar nada: trae tus cursos, fechas, avisos y archivos desde WebC.')),
       h('button', {class:'choice', type:'button', onclick:() => file.click()}, h('span', {class:'ico'}, '⇪'), h('b', null, 'Abrir un archivo'), h('span', null, 'Un respaldo tuyo, tu paquete de clases o una plantilla que te compartió alguien de tu curso.'))),
     file,
     h('div', {class:'feat'},
@@ -255,14 +255,14 @@ function vWelcome(v){
       h('div', null, h('b', null, 'Calendario'), 'Con fechas confirmadas o no, y exportable a Google Calendar.')),
     h('div', {class:'card welcome-howto'}, h('b', null, '¿Te lo compartió alguien de tu curso?'),
       h('ol', {class:'tiny'},
-        h('li', null, 'Conecta tu WebC: con el marcador «Enviar a Calculai» (sin instalar nada) o con el script de revisión, que además revisa WebC solo cada vez que abres la app (', h('button', {class:'linkbtn', type:'button', onclick:openAutoSyncHelp}, 'cómo instalarlo'), ').'),
+        h('li', null, 'Toca «Conectar con WebC»: abres WebC, copias un enlace y lo pegas aquí. No se instala nada y desde ahí Calculai revisa WebC solo cada vez que la abres.'),
         h('li', null, 'En «Clases», toca «✦ Crear clases con mi material»: elige los archivos de tu curso y se arman clases con ejercicios.'),
         h('li', null, 'En «Calendario», dime cuántas horas quieres estudiar y reparto las clases en los días que quedan.'))),
     h('p', {class:'tiny muted', style:'margin-top:22px'}, 'Privacidad: todo se guarda solo en este dispositivo y navegador. Nada se envía a ningún servidor de Calculai. Si conectas una IA, el material que elijas se envía directo a ese proveedor. Usa «Editar → Respaldo» para llevar tus datos a otro equipo.')));
 }
 /* Primera conexión con el script (sin materias todavía): lista tus cursos y trae los que elijas a la revisión. */
 function firstConnect(){
-  if (verLt(String(SYNC.agent), '1.1.1')){ openAutoSyncHelp(); toast('Actualiza el script de revisión para conectar desde aquí'); return; }
+  if (!webcToken() && verLt(String(SYNC.agent), '1.1.1')){ openAutoSyncHelp(); toast('Actualiza el script de revisión para conectar desde aquí'); return; }
   SYNC.first = true; requestWebcSync(true); render(); toast('Buscando tus cursos en WebC…');
 }
 function firstPicker(list){
@@ -1465,6 +1465,8 @@ function matText(mats){
 /* Archivos de WebC: los trae el script de revisión (v1.2+) con tu sesión. */
 const fileWaits = {};
 function fetchWebcFile(url){
+  const res = webcToken() && D.resources.find(r => r.url === url && r.file);
+  if (res) return webcFileByToken(res);
   return new Promise((resolve, reject) => {
     if (!SYNC.agent) return reject(new Error('NO_AGENT'));
     if (verLt(String(SYNC.agent), '1.2.0')) return reject(new Error('OLD_AGENT'));
@@ -1588,13 +1590,13 @@ function drawGen(){
   steps.push(h('label', {class:'field'}, h('span', null, 'Materia'),
     h('select', {disabled:busy || null, onchange:e => { GEN = null; openGenerator(e.target.value); }}, D.subjects.map(sb => { const o = h('option', {value:sb.id}, sb.name); if (sb.id === G.sid) o.selected = true; return o; }))));
   /* 1. Material */
-  const agentOk = SYNC.agent && !verLt(String(SYNC.agent), '1.2.0');
+  const agentOk = !!webcToken() || (SYNC.agent && !verLt(String(SYNC.agent), '1.2.0'));
   const fileIn = h('input', {type:'file', multiple:true, accept:'.pdf,.pptx,.docx,.txt,.md,application/pdf', style:'display:none', onchange:e => { G.local.push(...[...e.target.files].slice(0, 12)); e.target.value = ''; G.mats = []; G.plan = null; drawGen(); }});
   steps.push(h('section', {class:'gen-step'}, h('h4', null, '1. Elige el material'),
     res.length ? h('div', null,
       h('p', {class:'tiny muted', style:'margin:0 0 6px'}, agentOk ? 'Archivos de esta materia en WebC (los trae el script con tu sesión):' : 'Archivos de esta materia en WebC:'),
       h('div', {class:'gen-list'}, res.slice(0, 60).map(r => h('label', {class:'chk'}, h('input', {type:'checkbox', disabled:!agentOk || busy || null, checked:G.pick[r.id] || null, onchange:e => { G.pick[r.id] = e.target.checked; G.mats = []; G.plan = null; }}), h('span', null, r.title, ' ', h('small', {class:'muted'}, r.kind || ''))))),
-      !agentOk ? h('p', {class:'tiny note', style:'margin:6px 0 0'}, SYNC.agent ? 'Para traerlos directo de WebC, actualiza el script de revisión (versión 1.2 o más nueva).' : 'Para traerlos directo de WebC necesitas el script de revisión (Editar → Revisión automática). También puedes abrirlos en WebC, descargarlos y subirlos aquí.') : null)
+      !agentOk ? h('p', {class:'tiny note', style:'margin:6px 0 0'}, 'Para traerlos directo, ', h('button', {class:'linkbtn', type:'button', onclick:openWebcConnect}, 'conecta tu WebC'), ' (sin instalar nada). También puedes descargarlos de WebC y subirlos aquí.') : null)
       : h('p', {class:'tiny muted', style:'margin:0 0 6px'}, 'Esta materia no tiene archivos de WebC guardados. Sube aquí los PDF o presentaciones del curso.'),
     h('div', {class:'ai-row', style:'margin-top:8px'}, h('button', {class:'btn ghost small', type:'button', disabled:busy || null, onclick:() => fileIn.click()}, '⇪ Subir archivos'), h('span', {class:'tiny muted'}, 'PDF, PowerPoint (.pptx), Word (.docx) o texto'), fileIn),
     G.local.length ? h('div', {class:'gen-list'}, G.local.map((f, i) => h('div', {class:'chk'}, h('span', null, '📄 ', f.name, ' ', h('small', {class:'muted'}, Math.round(f.size / 1024) + ' KB')), busy ? null : h('button', {class:'linkbtn', type:'button', onclick:() => { G.local.splice(i, 1); G.mats = []; G.plan = null; drawGen(); }}, 'quitar')))) : null,
@@ -1639,7 +1641,7 @@ async function genRead(){
   for (let i = 0; i < jobs.length; i++){
     G.busy = `Leyendo ${i + 1} de ${jobs.length}: ${jobs[i].name}…`; drawGen();
     try { const f = await jobs[i].get(); G.mats.push(await readMaterial(f.name, f.buf, f.ctype)); }
-    catch (e) { const m = e && e.message || String(e); G.errs.push(`${jobs[i].name}: ${m === 'NO_AGENT' || m === 'OLD_AGENT' ? 'necesito el script de revisión actualizado para traerlo de WebC' : m}`); }
+    catch (e) { const m = e && e.message || String(e); G.errs.push(`${jobs[i].name}: ${m === 'NO_AGENT' || m === 'OLD_AGENT' ? 'conecta tu WebC (o revísalo de nuevo) para traerlo' : m}`); }
   }
   G.busy = ''; drawGen();
 }
@@ -1992,8 +1994,13 @@ function webcSteps(){
     h('p', {class:'tiny muted', style:'margin-top:12px'}, '¿Por qué así? WebC usa inicio de sesión con Microsoft, así que una app externa no puede entrar por ti con usuario y contraseña. El marcador usa tu sesión ya abierta en WebC: lee lo mismo que tú ves y se lo pasa a Calculai, sin contraseñas y sin servidores intermedios. Funciona también con otros Moodle.'));
 }
 function webcCard(){
+  if (webcToken()) return h('section', {class:'edit-sec card', style:'border:2px solid var(--ink)'},
+    h('h3', {class:'display', style:'margin:0 0 4px;font-size:1.15rem'}, '⟳ WebC conectado'),
+    h('p', {class:'tiny muted', style:'margin:0 0 8px'}, `Calculai revisa WebC solo cada vez que la abres${D.sync && D.sync.webc ? ' (última revisión: ' + agoMin(D.sync.webc.at) + ')' : ''}. La clave está solo en este navegador.`),
+    h('div', {class:'ai-row'}, h('button', {class:'btn small', type:'button', onclick:() => { go('ahora'); requestWebcSync(true); }}, 'Revisar ahora'), h('button', {class:'btn ghost small', type:'button', onclick:webcDisconnect}, 'Desconectar')));
   return h('section', {class:'edit-sec card', style:'border:2px solid var(--ink)'},
     h('h3', {class:'display', style:'margin:0 0 4px;font-size:1.15rem'}, '⟳ Conectar con WebC'),
+    h('p', {class:'tiny', style:'margin:0 0 8px'}, h('button', {class:'btn small hlbtn', type:'button', onclick:openWebcConnect}, 'Conectar sin instalar nada'), ' ', h('span', {class:'tiny muted'}, 'o usa el marcador:')),
     h('p', {class:'tiny muted', style:'margin:0 0 6px'}, D.sync && D.sync.webc ? `Última lectura: ${fmtD(parse(D.sync.webc.at.slice(0, 10)))} desde ${D.sync.webc.origin.replace(/^https?:\/\//, '')}. Repite el paso 3 cuando quieras actualizar: no se duplica nada.` : 'Trae tus cursos, las fechas del calendario de WebC, los recursos publicados y los avisos de los profesores.'),
     webcSteps());
 }
@@ -2139,7 +2146,7 @@ function applyWebc(){
       const n = {subj:sid, kind:x.kind, name:x.name.trim() || x.newsTitle, date:x.date, time:(x.time || '').trim(), slot:'', ver:true, src:`WebC · aviso «${x.newsTitle}»${x.newsDate ? ' (' + fmtD(parse(x.newsDate)) + ')' : ''}`, topics:[], scopeNote:'', note:'Fecha leída automáticamente del aviso y revisada por ti al importar.', webc:x.id};
       if (ex){ Object.assign(ex, n); nU++; } else { D.events.push({id:uid('ev'), ...n}); nE++; }
     });
-    if (row.addRes) c.resources.forEach(r => { if (!D.resources.some(x => x.url === r.url)){ D.resources.push({id:uid('r'), subj:sid, title:r.name, kind:({resource:'Archivo', url:'Enlace', folder:'Carpeta', page:'Página', assign:'Tarea', quiz:'Cuestionario', book:'Libro'}[r.type] || 'Recurso') + (r.section ? ' · ' + r.section : ''), url:r.url, webc:true}); nR++; } });
+    if (row.addRes) c.resources.forEach(r => { const ex = D.resources.find(x => x.url === r.url); if (ex){ if (r.file){ ex.file = r.file; ex.fname = r.fname; } return; } D.resources.push({id:uid('r'), subj:sid, title:r.name, kind:({resource:'Archivo', url:'Enlace', folder:'Carpeta', page:'Página', assign:'Tarea', quiz:'Cuestionario', book:'Libro'}[r.type] || 'Recurso') + (r.section ? ' · ' + r.section : ''), url:r.url, webc:true, ...(r.file ? {file:r.file, fname:r.fname} : {})}); nR++; });
     if (row.addNews){ D.news = (D.news || []).filter(n => n.subj !== sid); c.news.forEach(n => D.news.push({id:'n-' + n.id, subj:sid, title:n.title, url:n.url, author:n.author, date:newsDate(n), text:n.text})); nN += c.news.length; }
   });
   D.sync = D.sync || {}; D.sync.webc = {origin:W2.origin, at:W2.at};
@@ -2163,15 +2170,145 @@ function agoMin(s){ const m = minsSince(s); if (!isFinite(m)) return 'nunca'; if
 /* El script solo puede conectarse a WebC (@connect webc.uai.cl): otra dirección guardada (p. ej. en un archivo compartido) no se usa. */
 const webcBase = () => { const o = D.sync && D.sync.webc && D.sync.webc.origin; return /^https:\/\/webc\.uai\.cl$/.test(o || '') ? o : 'https://webc.uai.cl'; };
 
+/* ---------- WebC directo desde la app (sin instalar nada) ----------
+   Usa el servicio de la app móvil de Moodle. La persona abre en WebC el inicio de sesión de la app
+   (admin/tool/mobile/launch.php, el mismo que usa la app de WebC con Microsoft), copia el enlace
+   «Haga clic aquí si la app no se abre…» y lo pega en Calculai. Ese enlace trae una clave del servicio
+   móvil; con ella Calculai lee WebC directo: webservice/rest/server.php y webservice/pluginfile.php
+   aceptan pedidos desde otras páginas (Access-Control-Allow-Origin: *, verificado en el código de Moodle).
+   La clave queda solo en este navegador (localStorage), nunca en D, respaldos ni plantillas. */
+const WEBC = 'https://webc.uai.cl';
+const webcToken = () => lsGet('calculai-webc-token');
+const webcOn = () => !!webcToken() || !!SYNC.agent;
+const webcLaunchUrl = () => `${WEBC}/admin/tool/mobile/launch.php?service=moodle_mobile_app&passport=${Math.random().toString(36).slice(2, 12)}&urlscheme=calculai&confirmed=1`;
+function parseWebcKey(txt){
+  txt = String(txt || '').trim(); const m = txt.match(/token=([A-Za-z0-9+/=_-]+)/); let raw = m ? m[1] : txt;
+  if (/^[a-f0-9]{32}$/i.test(raw)) return raw;
+  try { const parts = atob(raw.replace(/-/g, '+').replace(/_/g, '/')).split(':::'); if (parts[1] && /^[a-f0-9]{32}$/i.test(parts[1])) return parts[1]; } catch {}
+  return null;
+}
+function wsForm(obj, prefix, out){ for (const [k, v] of Object.entries(obj)){ const key = prefix ? `${prefix}[${k}]` : k; if (v != null && typeof v === 'object') wsForm(v, key, out); else if (v != null) out.append(key, String(v)); } return out; }
+async function ws(fn, args = {}, token = webcToken()){
+  const body = wsForm(args, '', new URLSearchParams({wstoken:token, wsfunction:fn, moodlewsrestformat:'json'}));
+  let r; try { r = await fetch(WEBC + '/webservice/rest/server.php', {method:'POST', body}); } catch { throw new Error('WebC no permitió la conexión directa desde Calculai'); }
+  if (!r.ok) throw new Error('WebC respondió ' + r.status);
+  const j = await r.json().catch(() => null);
+  if (j && j.exception){ if (/invalidtoken|accessexception|invalidlogin/i.test(j.errorcode || '')) throw new Error('TOKEN'); throw new Error(j.message || j.errorcode || 'error de WebC'); }
+  return j;
+}
+const WEBC_TYPES = /\s+(Archivo|URL|Tarea|Foro|Carpeta|Cuestionario|Página|Pagina|File|Assignment|Forum|Folder|Quiz|Page)$/;
+function webcMeta(c){
+  const full = String(c.fullname || '').replace(/\s+/g, ' ').trim(), base = full.split(/\s+Sec\.|\s+Secci[oó]n|\s+STGO|\s+S-SEM/i)[0].trim();
+  const tc = x => x.toLowerCase().split(' ').map((w, i) => /^(i|ii|iii|iv|v|vi|vii|viii|ix|x)$/.test(w) ? w.toUpperCase() : i > 0 && /^(de|del|la|las|el|los|y|e|en|a|para)$/.test(w) ? w : w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+  const name = base === base.toUpperCase() ? tc(base) : base, code = ((c.shortname || '') + ' ' + (c.idnumber || '')).match(/[A-Z]{3,4}\d{3,4}/), sec = full.match(/Sec\.?\s*(\d+)/i);
+  return {name, short:name.split(' ')[0].slice(0, 18), code:code ? code[0] : '', section:sec ? 'Sección ' + sec[1] : '', academic:!!code};
+}
+function htmlText(html){
+  const d = new DOMParser().parseFromString(String(html || ''), 'text/html');
+  d.querySelectorAll('br').forEach(b => b.replaceWith('\n')); d.querySelectorAll('p,div,li,h1,h2,h3,h4,tr').forEach(x => x.append('\n'));
+  return (d.body ? d.body.textContent : '').replace(/[ \t ]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+async function poolRun(items, n, fn){ let next = 0; const run = async () => { while (next < items.length){ const k = next++; await fn(items[k], k); } }; await Promise.all(Array.from({length:Math.min(n, items.length)}, run)); }
+/* Lo mismo que hace el script (mismo formato de datos), pero desde Calculai con la clave. */
+async function restSync(rq){
+  const started = Date.now(), timeUp = () => Date.now() - started > 100000;
+  const want = (rq.courses || []).map(Number), codes = (rq.codes || []).map(c => String(c).toUpperCase().replace(/[^A-Z0-9]/g, ''));
+  const say = (state, msg) => { SYNC.ack = true; SYNC.webc = state; SYNC.webcMsg = msg || ''; paintSync(); };
+  say('checking', 'abriendo WebC');
+  const info = await ws('core_webservice_get_site_info');
+  say('checking', 'leyendo tus cursos');
+  let list;
+  try { list = (await ws('core_course_get_enrolled_courses_by_timeline_classification', {classification:'inprogress', limit:0, offset:0, sort:'fullname'})).courses || []; }
+  catch (e) { if (e.message === 'TOKEN') throw e; list = await ws('core_enrol_get_users_courses', {userid:info.userid}); }
+  const all = (list || []).filter(c => webcMeta(c).academic);
+  const linked = c => want.includes(c.id) || (!!webcMeta(c).code && codes.includes(webcMeta(c).code.toUpperCase()));
+  const sel = all.filter(linked), now = Math.floor(Date.now() / 1000), events = {};
+  (await Promise.all([ws('core_calendar_get_action_events_by_timesort', {timesortfrom:now - 14 * 86400, limitnum:50}).catch(() => ({})),
+    ws('core_calendar_get_calendar_upcoming_view', {courseid:1, categoryid:0}).catch(() => ({}))])).forEach(r => ((r && r.events) || []).forEach(e => { events[e.id] = e; }));
+  const forums = sel.length ? await ws('mod_forum_get_forums_by_courses', {courseids:sel.map(c => c.id)}).catch(() => []) : [];
+  const payload = {type:'calculai-webc', v:1, origin:WEBC, site:info.sitename || 'WebC', at:new Date().toISOString(), courses:[], partial:false, auto:true};
+  let done = 0; if (sel.length) say('reading', '0/' + sel.length);
+  await poolRun(sel, 3, async c => {
+    const m = webcMeta(c), out = {id:c.id, fullname:c.fullname, shortname:c.shortname, url:`${WEBC}/course/view.php?id=${c.id}`, name:m.name, short:m.short, code:m.code, section:m.section, events:[], resources:[], news:[]};
+    Object.values(events).forEach(e => { const cid = e.course ? e.course.id : e.courseid; if (cid === c.id) out.events.push({id:e.id, name:e.name, ts:e.timesort || e.timestart, type:e.modulename || e.eventtype || '', url:e.url || (e.action && e.action.url) || ''}); });
+    if (timeUp()) payload.partial = true;
+    else {
+      try {
+        (await ws('core_course_get_contents', {courseid:c.id}) || []).forEach(sec => (sec.modules || []).forEach(mod => {
+          if (!['resource', 'url', 'folder', 'page', 'assign', 'quiz', 'book'].includes(mod.modname) || !mod.url) return;
+          const f = (mod.contents || [])[0], file = /^(resource|page)$/.test(mod.modname) && f && /\/webservice\/pluginfile\.php\//.test(f.fileurl || '') ? f.fileurl : '';
+          out.resources.push({name:String(mod.name || '').trim().replace(WEBC_TYPES, ''), url:mod.url, type:mod.modname, section:String(sec.name || '').trim(), file, fname:file ? String(f.filename || '') : ''});
+        }));
+      } catch (e) { if (e.message === 'TOKEN') throw e; }
+      const fo = (forums || []).find(x => x.course === c.id && x.type === 'news');
+      if (fo && !timeUp()){
+        try { ((await ws('mod_forum_get_forum_discussions', {forumid:fo.id, page:0, perpage:6})).discussions || []).forEach(x => out.news.push({id:String(x.discussion), title:x.name || x.subject || 'Aviso', url:`${WEBC}/mod/forum/discuss.php?d=${x.discussion}`, author:x.userfullname || '', date:iso(new Date(x.created * 1000)), text:htmlText(x.message).slice(0, 5000)})); }
+        catch (e) { if (e.message === 'TOKEN') throw e; }
+      } else if (fo) payload.partial = true;
+    }
+    payload.courses.push(out); done++; say('reading', done + '/' + sel.length);
+  });
+  payload.unlinked = all.filter(c => !linked(c)).map(c => { const mm = webcMeta(c); return {id:c.id, name:mm.name, code:mm.code}; });
+  payload.ms = Date.now() - started;
+  return payload;
+}
+async function webcFileByToken(r){
+  let res; try { res = await fetch(r.file + (r.file.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(webcToken())); } catch { throw new Error('WebC no permitió descargar el archivo'); }
+  const ctype = res.headers.get('content-type') || '';
+  if (!res.ok) throw new Error(res.status === 401 || res.status === 403 ? 'tu conexión con WebC venció: conéctala de nuevo' : 'WebC respondió ' + res.status);
+  const buf = await res.arrayBuffer();
+  if (/json/.test(ctype) && buf.byteLength < 2000) throw new Error('tu conexión con WebC venció: conéctala de nuevo');
+  return {name:r.fname || r.title, ctype, buf};
+}
+/* Panel «Conectar con WebC»: abrir, copiar el enlace y pegarlo. */
+function openWebcConnect(){
+  const status = h('p', {class:'tiny gen-status', role:'status'});
+  const tryKey = async txt => {
+    const key = parseWebcKey(txt);
+    if (!key){ status.textContent = txt.trim() ? 'Ese texto no trae la clave: copia la dirección del enlace (clic derecho → «Copiar dirección del enlace»), no el texto que se ve.' : ''; return; }
+    status.textContent = 'Comprobando con WebC…';
+    try {
+      await ws('core_webservice_get_site_info', {}, key);
+      lsSet('calculai-webc-token', key); closeDrawer(); toast('WebC conectado: ya puedo revisarlo solo', 4000);
+      if (!D.subjects.length){ SYNC.first = true; render(); } SYNC.webc = 'idle'; requestWebcSync(true);
+    } catch (e) { status.textContent = e.message === 'TOKEN' ? 'WebC dice que esa clave no sirve. Vuelve al paso 1 y copia el enlace nuevo.' : `No se pudo: ${e.message}. Prueba con el marcador (abajo).`; }
+  };
+  const inp = h('input', {type:'text', class:'ai-key-in', style:'width:100%;max-width:none', placeholder:'Pega aquí el enlace copiado', 'aria-label':'Enlace de WebC', autocomplete:'off', spellcheck:'false',
+    onpaste:e => setTimeout(() => tryKey(e.target.value), 0), onchange:e => tryKey(e.target.value)});
+  $('#drawer').classList.add('wide');
+  openDrawer(h('div', {class:'drawer-head'}, h('div', {style:'flex:1'}, h('h3', null, 'Conectar con WebC')), h('button', {class:'iconbtn', type:'button', 'aria-label':'Cerrar', onclick:closeDrawer}, '✕')),
+    h('div', {class:'drawer-body'},
+      h('p', {class:'tiny muted', style:'margin:0 0 10px'}, 'Sin instalar nada: usas el mismo inicio de sesión que la app de WebC. Se hace una sola vez en este navegador.'),
+      h('ol', {class:'connect-steps'},
+        h('li', null, h('a', {class:'btn hlbtn', href:webcLaunchUrl(), target:'_blank', rel:'noopener'}, '⟳ Abrir WebC'), h('div', {class:'tiny muted'}, 'Si te lo pide, inicia sesión como siempre (con Microsoft).')),
+        h('li', null, h('b', null, 'En la página que se abre, copia el enlace para abrir la app.'), h('div', {class:'tiny muted'}, 'Dice algo como «Haga clic aquí si la app no se abre automáticamente». En el computador: clic derecho sobre el enlace → «Copiar dirección del enlace». En el celular: mantén presionado el enlace → «Copiar enlace».')),
+        h('li', null, h('b', null, 'Pégalo aquí:'), inp, status)),
+      h('p', {class:'tiny muted'}, 'Qué guarda: una clave como la que usa la app de WebC, solo en este navegador. No es tu contraseña y no va en tus respaldos ni plantillas. La puedes quitar en Editar → «Conectar con WebC».'),
+      h('details', {style:'margin-top:12px'}, h('summary', {class:'tiny', style:'cursor:pointer;font-weight:700'}, '¿No funciona? Otras formas de conectar'),
+        h('div', {style:'margin-top:8px'}, webcSteps()),
+        h('p', {class:'tiny'}, h('button', {class:'linkbtn', type:'button', onclick:openAutoSyncHelp}, 'Revisión con script (Tampermonkey)')))));
+  setTimeout(() => inp.focus(), 50);
+}
+function webcDisconnect(){ lsSet('calculai-webc-token', ''); SYNC.webc = 'idle'; render(); toast('WebC desconectado de este navegador'); }
+
 function requestWebcSync(force, extraCourses = []){
-  if (!SYNC.agent || (!D.subjects.length && !SYNC.first)) return false;
+  if (!webcOn() || (!D.subjects.length && !SYNC.first)) return false;
   if (SYNC.webc === 'checking' || SYNC.webc === 'reading') return false;
   if (!force && minsSince(D.sync && D.sync.webc && D.sync.webc.at) < STALE_MIN) return false;
   SYNC.webc = 'checking'; SYNC.webcMsg = ''; SYNC.startAt = Date.now(); SYNC.ack = false; paintSync();
   /* known: avisos que ya están guardados, por curso de WebC; el script (v1.1+) no los vuelve a abrir. */
   const known = {};
   D.subjects.forEach(s => { if (!s.webc) return; known[s.webc] = (D.news || []).filter(n => n.subj === s.id && n.src === 'webc' && /^n-/.test(n.id)).map(n => n.id.slice(2)); });
-  window.postMessage({type:'calculai-sync-request', base:webcBase(), courses:D.subjects.map(s => s.webc).filter(Boolean).concat(extraCourses), codes:D.subjects.map(s => s.code).filter(Boolean), known}, location.origin);
+  const rq = {type:'calculai-sync-request', base:webcBase(), courses:D.subjects.map(s => s.webc).filter(Boolean).concat(extraCourses), codes:D.subjects.map(s => s.code).filter(Boolean), known};
+  if (webcToken()){
+    clearTimeout(SYNC._t);
+    restSync(rq).then(d => applyAutoWebc(resolveKnownNews(d))).catch(e => {
+      if (e.message === 'TOKEN'){ lsSet('calculai-webc-token', ''); SYNC.webc = 'relink'; } else { SYNC.webc = 'error'; SYNC.webcMsg = e.message; }
+      SYNC.first = false; paintSync();
+    });
+    return true;
+  }
+  window.postMessage(rq, location.origin);
   clearTimeout(SYNC._t); SYNC._t = setTimeout(() => { if (SYNC.webc === 'checking' || SYNC.webc === 'reading'){ SYNC.webc = 'error'; SYNC.webcMsg = 'WebC no respondió a tiempo'; paintSync(); } }, 150000);
   /* Si el script no acusa recibo en 12 s, el problema es el script (no WebC): se dice de inmediato. */
   clearTimeout(SYNC._ack); SYNC._ack = setTimeout(() => { if (!SYNC.ack && SYNC.webc === 'checking'){ clearTimeout(SYNC._t); SYNC.webc = 'error'; SYNC.webcMsg = 'el script de revisión no recibió el pedido: actualízalo'; paintSync(); } }, 12000);
@@ -2229,7 +2366,7 @@ function applyAutoWebc(d){
       if (ex){ if (ex.date !== e.date || ex.time !== e.time){ ex.date = e.date; ex.time = e.time; ex.src = `WebC · calendario del curso (revisado ${fmtD(TODAY)})`; nU++; items.push({k:'cambio', t:ex.name, subj:sid, date:e.date}); } }
       else { D.events.push({id:uid('ev'), subj:sid, kind:e.kind, name:e.name, date:e.date, time:e.time, slot:'', ver:true, src:`WebC · calendario del curso (${fmtD(TODAY)})`, topics:[], scopeNote:'', note:'Agregada automáticamente desde el calendario de WebC.', webc:e.id, url:e.url}); nE++; items.push({k:'fecha', t:e.name, subj:sid, date:e.date}); }
     });
-    c.resources.forEach(r => { if (!D.resources.some(x => x.url === r.url)){ D.resources.push({id:uid('r'), subj:sid, title:r.name, kind:({resource:'Archivo', url:'Enlace', folder:'Carpeta', page:'Página', assign:'Tarea', quiz:'Cuestionario', book:'Libro'}[r.type] || 'Recurso') + (r.section ? ' · ' + r.section : ''), url:r.url, webc:true}); nR++; items.push({k:'recurso', t:r.name, subj:sid, url:r.url}); } });
+    c.resources.forEach(r => { const ex = D.resources.find(x => x.url === r.url); if (ex){ if (r.file && ex.file !== r.file){ ex.file = r.file; ex.fname = r.fname; } return; } D.resources.push({id:uid('r'), subj:sid, title:r.name, kind:({resource:'Archivo', url:'Enlace', folder:'Carpeta', page:'Página', assign:'Tarea', quiz:'Cuestionario', book:'Libro'}[r.type] || 'Recurso') + (r.section ? ' · ' + r.section : ''), url:r.url, webc:true, ...(r.file ? {file:r.file, fname:r.fname} : {})}); nR++; items.push({k:'recurso', t:r.name, subj:sid, url:r.url}); });
     /* Avisos: se reemplazan los de WebC de esta materia por la lista recibida (los ya conocidos llegan completados
        por resolveKnownNews). Nunca se tocan temas, clases, ejercicios ni progreso. */
     if (c.news.length){
@@ -2384,6 +2521,7 @@ window.addEventListener('storage', ev => { if (ev.key === 'calculai-oauth-return
 function startAutoSync(){
   try { const q = localStorage.getItem('calculai-oauth-return'); if (q){ localStorage.removeItem('calculai-oauth-return'); history.replaceState(null, '', location.pathname); msFinish(q); } } catch {}
   window.postMessage({type:'calculai-agent-ping'}, location.origin);
+  if (webcToken()) requestWebcSync(false);
   outlookSync(false);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible'){ requestWebcSync(false); outlookSync(false); } });
 }
@@ -2395,9 +2533,11 @@ function paintSync(){
   const sd = D.sync || {}, w = sd.webc;
   const link = (lbl, fn) => h('button', {class:'linkbtn', type:'button', onclick:fn}, lbl);
   let webc;
-  if (!SYNC.agent){
+  if (SYNC.webc === 'relink'){
+    webc = h('span', {class:'ss-item ss-warn'}, h('i', {class:'ss-dot'}), 'Tu conexión con WebC venció · ', link('Conectar de nuevo', openWebcConnect));
+  } else if (!webcOn()){
     webc = h('span', {class:'ss-item ' + (minsSince(w && w.at) > 1440 ? 'ss-warn' : '')}, h('i', {class:'ss-dot'}), `WebC ${w ? 'leído ' + agoMin(w.at) : 'sin conectar'} · `,
-      link('Activar revisión automática', openAutoSyncHelp), ' · ', link('Actualizar con el marcador', openWebcHelp));
+      link('Conectar con WebC', openWebcConnect));
   } else if (SYNC.webc === 'checking' || SYNC.webc === 'reading'){
     const secs = SYNC.startAt ? Math.round((Date.now() - SYNC.startAt) / 1000) : 0;
     webc = h('span', {class:'ss-item ss-busy'}, h('i', {class:'ss-dot'}), `Revisando WebC${SYNC.webcMsg ? (SYNC.webc === 'reading' ? ' · curso ' : ' · ') + SYNC.webcMsg : ''}${secs >= 3 ? ` · ${secs} s` : ''}…`);
@@ -2411,7 +2551,7 @@ function paintSync(){
     webc = h('span', {class:'ss-item ss-ok'}, h('i', {class:'ss-dot'}), `WebC revisado ${agoMin(w && w.at)}`, l && (l.nE + l.nN + l.nU) ? ` · ${[l.nE && plural(l.nE, 'fecha nueva', 'fechas nuevas'), l.nU && plural(l.nU, 'cambio', 'cambios'), l.nN && plural(l.nN, 'aviso nuevo', 'avisos nuevos')].filter(Boolean).join(', ')}` : '', w && w.partial ? ' · revisión parcial (WebC lento)' : '', ' · ', link('Revisar ahora', () => requestWebcSync(true)));
   }
   /* Script desactualizado: ofrece instalar la versión publicada. */
-  const oldScript = SYNC.agent && verLt(String(SYNC.agent), SCRIPT_V)
+  const oldScript = SYNC.agent && !webcToken() && verLt(String(SYNC.agent), SCRIPT_V)
     ? h('span', {class:'ss-item ss-warn'}, h('i', {class:'ss-dot'}), `Hay una versión más rápida del script de revisión (${SCRIPT_V}) · `, h('a', {href:USERSCRIPT_URL, target:'_blank', rel:'noopener'}, 'Actualizar ↗')) : null;
   let ol = null;
   const c = msCfg();

@@ -645,3 +645,8 @@ button.res{text-align:left;cursor:pointer;width:100%}
 .lc-toc{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 14px;padding:0 0 10px;border-bottom:1px dashed var(--line)}
 .lc-toc .chip{cursor:pointer;min-height:32px}
 .sec-title{flex-wrap:wrap}
+
+/* Conectar con WebC (clave de la app de WebC) */
+.connect-steps{margin:6px 0 12px;padding-left:20px;display:flex;flex-direction:column;gap:12px}
+.connect-steps li > .btn{margin:2px 0 4px}
+.connect-steps input{margin-top:6px}
