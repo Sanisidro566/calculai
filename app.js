@@ -2227,7 +2227,9 @@ function webcCard(){
   if (webcToken()) return h('section', {class:'edit-sec card', style:'border:2px solid var(--ink)'},
     h('h3', {class:'display', style:'margin:0 0 4px;font-size:1.15rem'}, '⟳ WebC conectado'),
     h('p', {class:'tiny muted', style:'margin:0 0 8px'}, `CalculAi revisa WebC solo cada vez que la abres${D.sync && D.sync.webc ? ' (última revisión: ' + agoMin(D.sync.webc.at) + ')' : ''}. La clave está solo en este navegador.`),
-    h('div', {class:'ai-row'}, h('button', {class:'btn small', type:'button', onclick:() => { go('ahora'); requestWebcSync(true); }}, 'Revisar ahora'), h('button', {class:'btn ghost small', type:'button', onclick:webcDisconnect}, 'Desconectar')));
+    h('div', {class:'ai-row'}, h('button', {class:'btn small', type:'button', onclick:() => { go('ahora'); requestWebcSync(true); }}, 'Revisar ahora'), h('button', {class:'btn ghost small', type:'button', onclick:webcDisconnect}, 'Desconectar')),
+    h('h4', {style:'margin:14px 0 4px'}, '⟳ Traer tus archivos para crear clases'),
+    webcSteps());
   return h('section', {class:'edit-sec card', style:'border:2px solid var(--ink)'},
     h('h3', {class:'display', style:'margin:0 0 4px;font-size:1.15rem'}, '⟳ Conectar con WebC'),
     h('p', {class:'tiny', style:'margin:0 0 8px'}, h('button', {class:'btn small hlbtn', type:'button', onclick:openWebcConnect}, 'Conectar sin instalar nada'), ' ', h('span', {class:'tiny muted'}, 'o usa el marcador:')),
