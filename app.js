@@ -774,13 +774,22 @@ async function aiOrPaste(prompt, opt, onText){
       h('details', {style:'margin-top:12px'}, h('summary', {class:'tiny', style:'cursor:pointer;font-weight:700'}, '⚙ O conecta una IA para hacerlo solo'), aiConfigEl(() => { closeDrawer(); aiOrPaste(prompt, opt, onText); }))));
 }
 async function evalUpload(e, files){
-  const st0 = studyOf(e);
+  const st0 = studyOf(e), ok = [], fail = [];
   for (const f of [...files].slice(0, 6)){
     evalBusy = `Leyendo ${f.name}…`; render();
-    try { const mt = await readMaterial(f.name, await f.arrayBuffer(), f.type); st0.docs = st0.docs.filter(d => d.name !== mt.name).concat({name:mt.name, pages:mt.pages.length, text:mt.pages.join('\n\n').slice(0, 40000)}).slice(-6); }
-    catch (err) { toast(`${f.name}: ${err.message}`, 5000); }
+    try { const mt = await readMaterial(f.name, await f.arrayBuffer(), f.type); st0.docs = st0.docs.filter(d => d.name !== mt.name).concat({name:mt.name, pages:mt.pages.length, text:mt.pages.join('\n\n').slice(0, 40000)}).slice(-6); ok.push(f.name); }
+    catch (err) { fail.push({name:f.name, msg:err.message}); }
   }
   evalBusy = ''; save(); render();
+  if (fail.length && ok.length === 0){
+    let msg = `No pude leer los archivos:\n${fail.map(f => `• ${f.name}: ${f.msg}`).join('\n')}`;
+    if (fail.some(f => f.msg.includes('escaneo') || f.msg.includes('casi no'))) msg += '\n\n💡 Si son escaneos, conviértelos a PDF con texto: abre en Google Docs y exporta como PDF.';
+    if (fail.some(f => f.msg.includes('antigua'))) msg += '\n\n💡 Actualiza a .pptx o .docx (versiones modernas).';
+    toast(msg, 8000);
+    return;
+  } else if (fail.length) {
+    toast(`Leí ${ok.length} archivo(s) OK${fail.length ? ` (${fail.length} no pude leer: ${fail.map(f => f.name).join(', ')})` : ''}`);
+  }
   if (st0.docs.length && !st0.auto) evalAutoClasses(e);
 }
 /* Con la pauta (o lo que escribiste), la IA divide lo que se evalúa en ~3 clases nuevas solo para esta
@@ -789,7 +798,7 @@ async function evalUpload(e, files){
 const evalFocus = e => { const st0 = studyOf(e); return `Esto es para preparar «${S(e.subj).name} · ${e.name}». El material de abajo es la pauta, el temario o una prueba anterior de esa evaluación: las clases deben enseñar exactamente lo que ahí se evalúa (conceptos, procedimientos y tipos de ejercicio), usar sus ejercicios como ejemplos resueltos y no agregar temas que no aparecen.${st0.text ? ' Además, el estudiante dice: ' + st0.text : ''}`; };
 async function evalAutoClasses(e){
   const st0 = studyOf(e), sb = S(e.subj);
-  if (!st0.docs.length && !st0.text){ toast('Sube la pauta o escribe qué entra'); return; }
+  if (!st0.docs.length && !st0.text){ toast('Sube una pauta, guía o prueba anterior · O escribe qué contenidos entran · Si ya subiste algo, mira arriba qué pasó'); return; }
   const mats = st0.docs.length ? st0.docs.map(x => ({name:x.name, pages:[x.text], chars:x.text.length})) : [{name:'Lo que entra', pages:[st0.text], chars:st0.text.length}];
   const mt = matText(mats).txt, focus = evalFocus(e), from = mats.map(m => m.name), say = m => { evalBusy = m; render(); };
   const finish = made => {
